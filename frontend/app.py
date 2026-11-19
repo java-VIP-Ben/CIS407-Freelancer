@@ -4,34 +4,6 @@ import customtkinter
 # matches users theme and all widgets are blue
 customtkinter.set_appearance_mode("System")
 customtkinter.set_default_color_theme("blue")
-
-
-
-# buttons
-class MyButtonCluster(customtkinter.CTkFrame):
-    def __init__(self,master,freeLancerName,skill):
-        super().__init__(master)
-
-        self.bg_color="#6b606085"
-        
-        self.nameLBL = customtkinter.CTkLabel(self,text=freeLancerName)
-        self.nameLBL.grid(row=0,column=0,padx=10,pady=(10,0))
-
-        self.skillLBL = customtkinter.CTkLabel(self,text=skill)
-        self.skillLBL.grid(row=0,column=1,padx=10,pady=(10,0))
-
-        # test btn
-        self.homeBTN = customtkinter.CTkButton(self, text="Book",command=self.buttonCallback)
-        self.homeBTN.grid(row=0,column=2,padx=10,pady=(10,0),sticky=W)
-
-    # button command - must be outside __init__ function but in the class
-    def buttonCallback(self):
-        print("button pressed")
-
-
-
-        
-
     
 # main window
 class App(customtkinter.CTk):
@@ -40,17 +12,23 @@ class App(customtkinter.CTk):
 
         # name of window
         self.title("Freelancer")
+
         # window size
         self.geometry("1080x720")
 
         self.grid_columnconfigure(0,weight=1)
         self.grid_rowconfigure(1,weight=1)
 
+
+        self.mainContainer = customtkinter.CTkFrame(self,corner_radius=0)
+        self.mainContainer.grid(row=1,column=0,sticky="nsew")
+
+
         self.scrollFrame = customtkinter.CTkScrollableFrame(self,fg_color="transparent",label_text="Find Your Freelancer")
         self.scrollFrame.grid(row=1,column=0,padx=10,pady=10,sticky="nsew")
         self.scrollFrame.grid_columnconfigure(0,weight=1)
 
-        self.mainNav = self.topNav()
+        
 
         itemsData = [
             {"freelanceName": "Mike Hawk", "skill": "flying"},
@@ -63,22 +41,45 @@ class App(customtkinter.CTk):
         for index, data in enumerate(itemsData):
             self.create_freelancer_card(index, data.get("freelanceName"), data.get("skill"))
 
-
-    def topNav(self):
         navBar = customtkinter.CTkFrame(self,height=50,corner_radius=0)
         navBar.grid(row=0,column=0,sticky="ew")
 
         self.logoLBL = customtkinter.CTkLabel(navBar,text="Freelancer")
         self.logoLBL.pack(side="left",padx=20,pady=20)
 
-        self.homeBTN = customtkinter.CTkButton(navBar,text="Home",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.selectPage("home"))
+        self.homeBTN = customtkinter.CTkButton(navBar,text="Home",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.showPage("home"))
         self.homeBTN.pack(side="left",padx=5,pady=10)
 
-        self.dashboardBTN = customtkinter.CTkButton(navBar,text="Dashboard",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.selectPage("dashboard"))
+        self.dashboardBTN = customtkinter.CTkButton(navBar,text="Dashboard",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.showPage("dashboard"))
         self.dashboardBTN.pack(side="left",padx=5,pady=10)
 
         self.settingsBTN = customtkinter.CTkButton(navBar,text="Settings",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.selectPage("settings"))
         self.settingsBTN.pack(side="right",padx=20,pady=10)
+
+        self.pages = {
+            "home": {
+                "frame": self.homePage(self.mainContainer),
+                "btn": self.homeBTN
+            },
+            "dashboard": {
+                "frame": self.dashboardPage(self.mainContainer),
+                "btn": self.dashboardBTN
+            }
+        }
+
+    def homePage(self,master):
+        homePage = customtkinter.CTkFrame(master,corner_radius=0)
+        homePage.grid(row=0,column=0,padx=10,pady=10,sticky="nsew")
+
+        testLBL = customtkinter.CTkLabel(homePage,text="Home")
+        testLBL.pack(side="left")
+
+    def dashboardPage(self,master):
+        dashboardPage = customtkinter.CTkFrame(master,corner_radius=0)
+        dashboardPage.grid(row=0,column=0,padx=10,pady=10,sticky="nsew")
+
+        testLBL = customtkinter.CTkLabel(dashboardPage,text="dashboard")
+        testLBL.pack(side="left")
 
     def create_freelancer_card(self, index, name, skill):
         # Individual card frame for each item
@@ -97,8 +98,6 @@ class App(customtkinter.CTk):
         skill_label = customtkinter.CTkLabel(card, text=skill, text_color="gray", font=customtkinter.CTkFont(size=13), anchor="w")
         skill_label.grid(row=0, column=1, padx=10, pady=12, sticky="w")
 
-
-
         # book button
         book_btn = customtkinter.CTkButton(
             card, 
@@ -115,6 +114,21 @@ class App(customtkinter.CTk):
 
     def selectPage(self, page):
         print(f"Switch to {page}")
+
+
+    def showPage(self,targetPage):
+        for key, page in self.pages.items():
+            if key == targetPage:
+                page["frame"].pack(fill="both", expand=True)
+                page["btn"].configure(
+                    fg_color=("gray75", "gray25"),
+                    font=customtkinter.CTkFont(weight="bold"),
+                )
+            else:
+                page["frame"].pack_forget()
+                page["btn"].configure(
+                    fg_color="transparent", font=customtkinter.CTkFont(weight="normal")
+                )
 
 
 app = App()
