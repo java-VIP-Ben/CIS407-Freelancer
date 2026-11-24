@@ -58,6 +58,8 @@ class App(customtkinter.CTk):
             }
         }
 
+        self.showPage("login")
+
     def loginPage(self,master,onLogin):
         loginPage = customtkinter.CTkFrame(master,corner_radius=0)
         loginPage.grid_rowconfigure(0,weight=1)
@@ -164,7 +166,6 @@ class App(customtkinter.CTk):
         print(f"Switch to {page}")
 
     def handleLogin(self, username: str):
-        """Runs when login succeeds."""
         self.current_user = username
         self.showPage("home")
 
