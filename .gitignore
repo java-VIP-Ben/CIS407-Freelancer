@@ -1,4 +1,12 @@
+# Python generated files
 __pycache__/
 *.pyc
 *.pyo
+
+# Virtual environment
 .venv/
+
+# SQLite temporary files
+*.db-journal
+*.db-wal
+*.db-shm
