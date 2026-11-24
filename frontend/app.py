@@ -2,12 +2,7 @@ from tkinter import messagebox
 from frontend.admin_page import AdminPage
 import customtkinter as ctk
 
-from backend.database import (
-    create_freelancer,
-    get_freelancers,
-    update_freelancer,
-    delete_freelancer,
-)
+from backend.database import get_freelancers
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -19,7 +14,6 @@ class App(ctk.CTk):
         self.title("Freelancer")
         self.geometry("1080x720")
         self.minsize(780, 540)
-        self.selected_freelancer_id = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -30,7 +24,7 @@ class App(ctk.CTk):
             side="left", padx=20, pady=14
         )
         self.nav_buttons = {}
-        for page_name in ("home", "dashboard", "admin", "settings"):
+        for page_name in ("home", "admin", "settings"):
             button = ctk.CTkButton(
                 nav_bar,
                 text=page_name.title(),
@@ -49,7 +43,6 @@ class App(ctk.CTk):
 
         self.pages = {
             "home": self.home_page(self.main_container),
-            "dashboard": self.dashboard_page(self.main_container),
             "admin": AdminPage(self.main_container),
             "settings": self.settings_page(self.main_container),
         }
@@ -66,39 +59,6 @@ class App(ctk.CTk):
         self.scroll_frame.grid_columnconfigure(0, weight=1)
         return page
 
-    def dashboard_page(self, master):
-        page = ctk.CTkScrollableFrame(master, corner_radius=0)
-        ctk.CTkLabel(page, text="Freelancer Management", font=ctk.CTkFont(size=24, weight="bold")).pack(
-            anchor="w", padx=20, pady=(20, 12)
-        )
-        form = ctk.CTkFrame(page)
-        form.pack(fill="x", padx=20, pady=10)
-        form.grid_columnconfigure(1, weight=1)
-
-        self.entries = {}
-        for row, (key, label) in enumerate((
-            ("name", "Name"), ("email", "Email"), ("phone", "Phone")
-        )):
-            ctk.CTkLabel(form, text=label).grid(row=row, column=0, padx=12, pady=10, sticky="w")
-            entry = ctk.CTkEntry(form, placeholder_text=f"Enter {label.lower()}")
-            entry.grid(row=row, column=1, padx=12, pady=10, sticky="ew")
-            self.entries[key] = entry
-
-        actions = ctk.CTkFrame(page, fg_color="transparent")
-        actions.pack(fill="x", padx=20, pady=10)
-        ctk.CTkButton(actions, text="Add Freelancer", command=self.add_freelancer).pack(side="left", padx=4)
-        ctk.CTkButton(actions, text="Update Selected", command=self.edit_freelancer).pack(side="left", padx=4)
-        ctk.CTkButton(actions, text="Delete Selected", fg_color="#B23B3B", hover_color="#8F2D2D",
-                      command=self.remove_freelancer).pack(side="left", padx=4)
-        ctk.CTkButton(actions, text="Clear", command=self.clear_form).pack(side="left", padx=4)
-
-        ctk.CTkLabel(page, text="Select a freelancer below to edit", font=ctk.CTkFont(size=15)).pack(
-            anchor="w", padx=20, pady=(12, 4)
-        )
-        self.dashboard_list = ctk.CTkScrollableFrame(page, height=240)
-        self.dashboard_list.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-        self.dashboard_list.grid_columnconfigure(0, weight=1)
-        return page
 
     def settings_page(self, master):
         page = ctk.CTkFrame(master, corner_radius=0)
@@ -119,7 +79,7 @@ class App(ctk.CTk):
             self.nav_buttons[name].configure(
                 fg_color=("gray75", "gray25") if name == target_page else "transparent"
             )
-        if target_page in ("home", "dashboard"):
+        if target_page == "home":
             self.refresh_freelancers()
 
         if target_page == "admin":
@@ -132,31 +92,19 @@ class App(ctk.CTk):
             messagebox.showerror("Database Error", str(exc))
             return
 
-        for parent in (self.scroll_frame, self.dashboard_list):
-            for child in parent.winfo_children():
-                child.destroy()
+        for child in self.scroll_frame.winfo_children():
+            child.destroy()
 
         if not freelancers:
             ctk.CTkLabel(self.scroll_frame, text="No freelancers registered yet.").grid(
-                row=0, column=0, padx=20, pady=20
-            )
-            ctk.CTkLabel(self.dashboard_list, text="No freelancers registered yet.").grid(
                 row=0, column=0, padx=20, pady=20
             )
             return
 
         # freelancers schema: FreelancerID, Name, SkillsListID, Email, Phone, ReviewsID
         for index, record in enumerate(freelancers):
-            freelancer_id, name, _, email, phone, _ = record
+            freelancer_id, name, _, email, _, _ = record
             self.create_freelancer_card(index, freelancer_id, name, email)
-            button = ctk.CTkButton(
-                self.dashboard_list,
-                text=f"#{freelancer_id}  {name}  |  {email or 'No email'}  |  {phone or 'No phone'}",
-                anchor="w", fg_color=("gray80", "gray25"), text_color=("black", "white"),
-                command=lambda fid=freelancer_id, n=name, e=email, p=phone:
-                    self.select_freelancer(fid, n, e, p),
-            )
-            button.grid(row=index, column=0, sticky="ew", padx=6, pady=4)
 
     def create_freelancer_card(self, index, freelancer_id, name, email):
         card = ctk.CTkFrame(self.scroll_frame, corner_radius=8)
@@ -177,70 +125,3 @@ class App(ctk.CTk):
 
     def book_freelancer(self, freelancer_id):
         messagebox.showinfo("Booking", f"Booking for freelancer #{freelancer_id} is coming soon.")
-
-    def select_freelancer(self, freelancer_id, name, email, phone):
-        self.selected_freelancer_id = freelancer_id
-        for key, value in (("name", name), ("email", email), ("phone", phone)):
-            self.entries[key].delete(0, "end")
-            self.entries[key].insert(0, value or "")
-
-    def clear_form(self):
-        self.selected_freelancer_id = None
-        for entry in self.entries.values():
-            entry.delete(0, "end")
-
-    def form_values(self):
-        name = self.entries["name"].get().strip()
-        email = self.entries["email"].get().strip()
-        phone = self.entries["phone"].get().strip()
-        if not name or not email or not phone:
-            messagebox.showwarning("Missing Information", "Please fill in name, email, and phone.")
-            return None
-        if "@" not in email or "." not in email.split("@")[-1]:
-            messagebox.showwarning("Invalid Email", "Please enter a valid email address.")
-            return None
-        return name, email, phone
-
-    def add_freelancer(self):
-        values = self.form_values()
-        if values is None:
-            return
-        try:
-            new_id = create_freelancer(*values)
-        except Exception as exc:
-            messagebox.showerror("Database Error", str(exc))
-            return
-        self.clear_form()
-        self.refresh_freelancers()
-        messagebox.showinfo("Success", f"Freelancer #{new_id} added.")
-
-    def edit_freelancer(self):
-        if self.selected_freelancer_id is None:
-            messagebox.showwarning("No Selection", "Select a freelancer from the list first.")
-            return
-        values = self.form_values()
-        if values is None:
-            return
-        try:
-            count = update_freelancer(self.selected_freelancer_id, *values)
-        except Exception as exc:
-            messagebox.showerror("Database Error", str(exc))
-            return
-        self.clear_form()
-        self.refresh_freelancers()
-        messagebox.showinfo("Update", "Freelancer updated." if count else "Freelancer no longer exists.")
-
-    def remove_freelancer(self):
-        if self.selected_freelancer_id is None:
-            messagebox.showwarning("No Selection", "Select a freelancer from the list first.")
-            return
-        if not messagebox.askyesno("Confirm Delete", "Delete the selected freelancer?"):
-            return
-        try:
-            count = delete_freelancer(self.selected_freelancer_id)
-        except Exception as exc:
-            messagebox.showerror("Database Error", str(exc))
-            return
-        self.clear_form()
-        self.refresh_freelancers()
-        messagebox.showinfo("Delete", "Freelancer deleted." if count else "Freelancer no longer exists.")
