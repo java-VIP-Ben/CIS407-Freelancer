@@ -36,6 +36,9 @@ class App(customtkinter.CTk):
         self.dashboardBTN = customtkinter.CTkButton(self.navBar,text="Dashboard",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.showPage("dashboard"))
         self.dashboardBTN.pack(side="left",padx=5,pady=10)
 
+        self.projectBTN = customtkinter.CTkButton(self.navBar,text="Projects",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.showPage("project"))
+        self.projectBTN.pack(side="left",padx=5,pady=10)
+
         self.loginBTN = customtkinter.CTkButton(self.navBar,text="Sign Out",fg_color="transparent",hover_color=("gray70","gray30"),command=lambda:self.showPage("login"))
         self.loginBTN.pack(side="right",padx=5,pady=10)
 
@@ -55,6 +58,10 @@ class App(customtkinter.CTk):
             "login": {
                 "frame": self.loginPage(self.mainContainer,self.handleLogin),
                 "btn": self.loginBTN
+            },
+            "project": {
+                "frame": self.projectPage(self.mainContainer),
+                "btn": self.projectBTN
             }
         }
 
@@ -130,6 +137,21 @@ class App(customtkinter.CTk):
         
         return dashboardPage
 
+    def projectPage(self,master):
+        projectPage = customtkinter.CTkFrame(master,corner_radius=0)
+        projectPage.grid_rowconfigure(0,weight=1)
+        projectPage.grid_columnconfigure(0,weight=1)
+
+        currentproFrame = customtkinter.CTkScrollableFrame(projectPage,fg_color="transparent",label_text="Current Projects")
+        currentproFrame.grid(row=0,column=0,padx=10,pady=10,sticky="nsew")
+        currentproFrame.grid_columnconfigure(0,weight=1)
+
+        
+
+        
+
+        return projectPage
+
 
     def create_freelancer_card(self, index, name, skill):
         # Individual card frame for each item
@@ -158,6 +180,10 @@ class App(customtkinter.CTk):
             command=lambda: self.book_freelancer(name)
         )
         book_btn.grid(row=0, column=2, padx=15, pady=12, sticky="e")
+
+    def createCurrentProjects(self, index, name, skill):
+        print("test")
+
 
     def book_freelancer(self, name):
         print(f"Booked {name}!")
