@@ -1,4 +1,5 @@
 from tkinter import messagebox
+from frontend.admin_page import AdminPage
 import customtkinter as ctk
 
 from backend.database import (
@@ -56,7 +57,7 @@ class App(ctk.CTk):
             side="left", padx=20, pady=14
         )
         self.nav_buttons = {}
-        for page_name in ("home", "dashboard", "settings"):
+        for page_name in ("home", "dashboard", "admin", "settings"):
             button = ctk.CTkButton(
                 nav_bar,
                 text=page_name.title(),
@@ -96,6 +97,7 @@ class App(ctk.CTk):
 =======
             "home": self.home_page(self.main_container),
             "dashboard": self.dashboard_page(self.main_container),
+            "admin": AdminPage(self.main_container),
             "settings": self.settings_page(self.main_container),
 >>>>>>> 2971eba (CRUD freelancers)
         }
@@ -319,6 +321,9 @@ class App(ctk.CTk):
         if target_page in ("home", "dashboard"):
             self.refresh_freelancers()
 >>>>>>> 2971eba (CRUD freelancers)
+
+        if target_page == "admin":
+            self.pages["admin"].on_show()
 
     def refresh_freelancers(self):
         try:
