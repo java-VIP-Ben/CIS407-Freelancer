@@ -1,9 +1,11 @@
 import sqlite3
+from pathlib import Path
 
 # ---------------------------------------
 # 1. Create SQLite database and table
 # ---------------------------------------
-conn = sqlite3.connect("freelancerApp.db")
+DB_NAME = Path(__file__).resolve().parent / "freelancerApp.db"
+conn = sqlite3.connect(DB_NAME)
 conn.execute("PRAGMA foreign_keys = ON")
 cur = conn.cursor()
 
