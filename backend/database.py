@@ -15,8 +15,8 @@
 
 
 import sqlite3
-
-DB_NAME = "freelancerApp.db"
+from pathlib import Path
+DB_NAME = Path(__file__).resolve().parent / "freelancerApp.db"
 
 def create_freelancer(name, email, phone):
     conn = sqlite3.connect(DB_NAME)
@@ -62,20 +62,26 @@ def update_freelancer(freelancer_id, name, email, phone):
     return rows_updated
 
 def delete_freelancer(freelancer_id):
-    conn = sqlite3.connect(DB_NAME)
-    conn.execute("PRAGMA foreign_keys = ON")
-    cur = conn.cursor()
+    conn = sqlite3.connect(DB_NAME, timeout=10)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
 
-    cur.execute("""
-        DELETE FROM freelancers
-        WHERE FreelancerID = ?
-    """, (freelancer_id,))
+        cur.execute("""
+            DELETE FROM freelancers
+            WHERE FreelancerID = ?
+        """, (freelancer_id,))
 
-    conn.commit()
-    rows_deleted = cur.rowcount
-    conn.close()
+        rows_deleted = cur.rowcount
+        conn.commit()
+        return rows_deleted
+    
+    except sqlite3.Error:
+        conn.rollback()
+        raise
 
-    return rows_deleted
+    finally: 
+        conn.close()
 
 # Projects
 def create_projects(freelancer_id, client_id, payment_id, skills_id, milestones_id, proposal_id):
