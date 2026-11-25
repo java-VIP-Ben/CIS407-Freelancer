@@ -10,6 +10,9 @@ from backend.database import (
 )
 
 
+from backend.listings_database import format_price
+
+
 PROJECT_FIELDS = (
     ("FreelancerID", "Freelancer ID"),
     ("ClientID", "Client ID"),
@@ -318,7 +321,7 @@ class ClientProjectsPage(ctk.CTkFrame):
             return False
 
         try:
-            rows = get_projects_for_client(client_id)
+            rows = get_projects_for_client(client_id, include_price=True)
         except sqlite3.Error as exc:
             self.status.configure(text=f"Unable to load your projects: {exc}")
             return False
@@ -371,7 +374,9 @@ class ClientProjectsPage(ctk.CTkFrame):
         ctk.CTkLabel(
             card, text=freelancer_name, anchor="w",
             font=ctk.CTkFont(size=15, weight="bold"),
-        ).grid(row=4, column=0, sticky="ew", padx=16, pady=(2, 14))
+        ).grid(row=4, column=0, sticky="ew", padx=16, pady=(2, 8))
+        ctk.CTkLabel(card, text=f"Agreed price: {format_price(row[4])}", anchor="w").grid(
+            row=5, column=0, sticky="ew", padx=16, pady=(0, 14))
 
 
 class FreelancerProjectsPage(ctk.CTkFrame):
@@ -405,7 +410,7 @@ class FreelancerProjectsPage(ctk.CTkFrame):
             self.status.configure(text="Sign in as a freelancer to view projects.")
             return False
         try:
-            rows = get_projects_for_freelancer(freelancer_id)
+            rows = get_projects_for_freelancer(freelancer_id, include_price=True)
         except sqlite3.Error as exc:
             self.status.configure(text=f"Unable to load your projects: {exc}")
             return False
@@ -426,7 +431,7 @@ class FreelancerProjectsPage(ctk.CTkFrame):
             widget.destroy()
 
     def create_card(self, index, row):
-        project_id, project_name, client_id, client_name = row
+        project_id, project_name, client_id, client_name, price_cents = row
         title = project_name.strip() if project_name else f"Untitled project #{project_id}"
         client = client_name.strip() if client_name else f"Client #{client_id}"
         card = ctk.CTkFrame(
@@ -450,4 +455,6 @@ class FreelancerProjectsPage(ctk.CTkFrame):
         ctk.CTkLabel(
             card, text=f"CLIENT  |  {client} (ID #{client_id})",
             anchor="w", font=ctk.CTkFont(size=15, weight="bold"),
-        ).grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
+        ).grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 8))
+        ctk.CTkLabel(card, text=f"Agreed price: {format_price(price_cents)}", anchor="w").grid(
+            row=4, column=0, sticky="ew", padx=16, pady=(0, 14))

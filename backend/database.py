@@ -433,6 +433,7 @@ def initialize_project_workflow():
         for table, column, definition in (
             ('projects', 'ProjectName', 'TEXT'),
             ('proposals', 'FreelancerID', 'INTEGER REFERENCES freelancers(FreelancerID)'),
+            ('proposals', 'PriceCents', "INTEGER CHECK(PriceCents IS NULL OR (typeof(PriceCents) = 'integer' AND PriceCents BETWEEN 0 AND 999999999))"),
             ('proposals', 'Status', "TEXT NOT NULL DEFAULT 'pending' CHECK(Status IN ('pending','accepted','declined'))"),
         ):
             columns = {row[1].lower() for row in conn.execute(f'PRAGMA table_info({table})')}
@@ -452,21 +453,25 @@ def create_client_project(client_id, project_name):
         return conn.execute('INSERT INTO projects (ClientID, ProjectName) VALUES (?, ?)', (client_id, name)).lastrowid
 
 
-def get_projects_for_client(client_id):
+def get_projects_for_client(client_id, include_price=False):
     with workflow_connection() as conn:
-        return conn.execute('''SELECT p.ProjectID, p.ProjectName, f.Name, p.FreelancerID
+        price = ', r.PriceCents' if include_price else ''
+        return conn.execute(f'''SELECT p.ProjectID, p.ProjectName, f.Name, p.FreelancerID{price}
             FROM projects p LEFT JOIN freelancers f ON f.FreelancerID=p.FreelancerID
+            LEFT JOIN proposals r ON r.ProposalID=p.ProposalID AND r.ProjectID=p.ProjectID AND r.Status='accepted' AND r.FreelancerID=p.FreelancerID
             WHERE p.ClientID=? ORDER BY p.ProjectID DESC''', (client_id,)).fetchall()
 
 
-def get_projects_for_freelancer(freelancer_id):
+def get_projects_for_freelancer(freelancer_id, include_price=False):
     with workflow_connection() as conn:
-        return conn.execute('''SELECT p.ProjectID, p.ProjectName, p.ClientID, c.Name
+        price = ', r.PriceCents' if include_price else ''
+        return conn.execute(f'''SELECT p.ProjectID, p.ProjectName, p.ClientID, c.Name{price}
             FROM projects p LEFT JOIN clients c ON c.ClientID=p.ClientID
+            LEFT JOIN proposals r ON r.ProposalID=p.ProposalID AND r.ProjectID=p.ProjectID AND r.Status='accepted' AND r.FreelancerID=p.FreelancerID
             WHERE p.FreelancerID=? ORDER BY p.ProjectID DESC''', (freelancer_id,)).fetchall()
 
 
-def create_project_proposal(project_id, freelancer_id, client_id):
+def create_project_proposal(project_id, freelancer_id, client_id, *, listing_id=None, expected_price_cents=None):
     with workflow_connection() as conn:
         conn.execute('BEGIN IMMEDIATE')
         project = conn.execute('SELECT ProjectName FROM projects WHERE ProjectID=? AND ClientID=?', (project_id, client_id)).fetchone()
@@ -476,14 +481,27 @@ def create_project_proposal(project_id, freelancer_id, client_id):
             raise ValueError('Freelancer does not exist.')
         if conn.execute("SELECT 1 FROM proposals WHERE ProjectID=? AND FreelancerID=? AND Status='pending'", (project_id, freelancer_id)).fetchone():
             raise ValueError('A pending invitation already exists for this freelancer.')
-        return conn.execute('''INSERT INTO proposals (ProposalName, ProjectID, FreelancerID, Status)
-            VALUES (?, ?, ?, 'pending')''', (project[0] or f'Project #{project_id}', project_id, freelancer_id)).lastrowid
+        price = None
+        if listing_id is not None:
+            listing = conn.execute('SELECT FreelancerID, PriceCents FROM listings WHERE ListingID=?', (listing_id,)).fetchone()
+            if listing is None or listing[0] != freelancer_id:
+                raise ValueError('Listing no longer exists or has changed freelancer. Refresh Home.')
+            price = listing[1]
+            if price is None:
+                raise ValueError('This listing has no price. Ask the administrator to set one.')
+            if type(expected_price_cents) is not int or price != expected_price_cents:
+                raise ValueError('The listing price has changed. Close this dialog and refresh Home.')
+        elif expected_price_cents is not None:
+            raise ValueError('A listing is required to quote a price.')
+        return conn.execute('''INSERT INTO proposals (ProposalName, ProjectID, FreelancerID, Status, PriceCents)
+            VALUES (?, ?, ?, 'pending', ?)''', (project[0] or f'Project #{project_id}', project_id, freelancer_id, price)).lastrowid
 
 
-def get_freelancer_proposals(freelancer_id):
+def get_freelancer_proposals(freelancer_id, include_price=False):
     with workflow_connection() as conn:
-        return conn.execute('''SELECT r.ProposalID, r.ProposalName, p.ProjectID, p.ProjectName,
-            p.ClientID, c.Name, r.Status FROM proposals r JOIN projects p ON p.ProjectID=r.ProjectID
+        price = ', r.PriceCents' if include_price else ''
+        return conn.execute(f'''SELECT r.ProposalID, r.ProposalName, p.ProjectID, p.ProjectName,
+            p.ClientID, c.Name, r.Status{price} FROM proposals r JOIN projects p ON p.ProjectID=r.ProjectID
             LEFT JOIN clients c ON c.ClientID=p.ClientID WHERE r.FreelancerID=? ORDER BY r.ProposalID DESC''', (freelancer_id,)).fetchall()
 
 

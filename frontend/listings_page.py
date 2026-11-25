@@ -6,7 +6,7 @@ import customtkinter as ctk
 
 from backend.listings_database import (
     SEARCH_FIELDS, initialize_listings, get_freelancer_options, get_listings,
-    filter_listings, create_listing, update_listing, delete_listing,
+    filter_listings, create_listing, update_listing, delete_listing, parse_price, format_price,
 )
 
 
@@ -106,9 +106,13 @@ class ListingsHome(ctk.CTkFrame):
         ctk.CTkLabel(card, text=details, anchor="w", justify="left", wraplength=490,
                      text_color=("#245B93", "#8DBFF5")).grid(
             row=3, column=0, sticky="ew", padx=15, pady=(2, 12))
+        ctk.CTkLabel(card, text=format_price(row["PriceCents"]),
+                     font=ctk.CTkFont(size=18, weight="bold")).grid(
+            row=0, column=1, rowspan=2, padx=15, pady=(12, 2))
         ctk.CTkButton(card, text="Book", width=90,
+                      state="normal" if row["PriceCents"] is not None else "disabled",
                       command=lambda r=row: self.on_book(r)).grid(
-            row=0, column=1, rowspan=4, padx=15, pady=12)
+            row=2, column=1, rowspan=2, padx=15, pady=(2, 12))
 
 
 class ListingsPage(ctk.CTkFrame):
@@ -135,9 +139,11 @@ class ListingsPage(ctk.CTkFrame):
         self.title_entry = self.entry(form, "Job / title *", 0, 1)
         self.skills_entry = self.entry(form, "Skills * (comma separated)", 2, 0)
         self.category_entry = self.entry(form, "Category (optional)", 2, 1)
-        ctk.CTkLabel(form, text="Description *", anchor="w").grid(row=4, column=0, columnspan=2, sticky="ew", padx=12)
+        ctk.CTkLabel(form, text="Description *", anchor="w").grid(row=4, column=0, sticky="ew", padx=12)
+        self.price_entry = self.entry(form, "Fixed price (USD) *", 4, 1)
         self.description = ctk.CTkTextbox(form, height=76, wrap="word")
-        self.description.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
+        self.description.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 10))
+        self.price_entry.grid_configure(sticky="new")
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 8))
         self.create_button = ctk.CTkButton(actions, text="Create Listing", width=115, command=self.create_action)
@@ -153,10 +159,10 @@ class ListingsPage(ctk.CTkFrame):
         table.grid(row=4, column=0, sticky="nsew", padx=20, pady=(0, 6))
         table.grid_rowconfigure(0, weight=1)
         table.grid_columnconfigure(0, weight=1)
-        columns = ("ListingID", "Name", "JobTitle", "Skills", "Category")
+        columns = ("ListingID", "Name", "JobTitle", "Skills", "Category", "Price")
         self.tree = ttk.Treeview(table, columns=columns, show="headings", selectmode="browse", height=4)
         self.tree.grid(row=0, column=0, sticky="nsew")
-        for col, label, width in zip(columns, ("ID", "Freelancer", "Job / title", "Skills", "Category"), (55, 145, 190, 160, 120)):
+        for col, label, width in zip(columns, ("ID", "Freelancer", "Job / title", "Skills", "Category", "Price (USD)"), (55, 145, 190, 160, 120, 110)):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=width, minwidth=45, stretch=True)
         y = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
@@ -208,7 +214,7 @@ class ListingsPage(ctk.CTkFrame):
         self.tree.delete(*self.tree.get_children())
         self.records = {str(row["ListingID"]): row for row in rows}
         for iid, row in self.records.items():
-            self.tree.insert("", "end", iid=iid, values=[row[key] or "" for key in ("ListingID", "Name", "JobTitle", "Skills", "Category")])
+            self.tree.insert("", "end", iid=iid, values=[row[key] or "" for key in ("ListingID", "Name", "JobTitle", "Skills", "Category")] + [format_price(row["PriceCents"])])
         self.show_status(f"{len(rows)} listing(s)." if self.options else "Add a freelancer in Admin before creating a listing.")
         return True
 
@@ -218,7 +224,7 @@ class ListingsPage(ctk.CTkFrame):
         if selection:
             self.tree.selection_remove(*selection)
         self.freelancer.set("Select a freelancer" if self.options else "No freelancers available")
-        for entry in (self.title_entry, self.skills_entry, self.category_entry):
+        for entry in (self.title_entry, self.skills_entry, self.category_entry, self.price_entry):
             entry.delete(0, "end")
         self.description.delete("1.0", "end")
         self.set_actions()
@@ -236,12 +242,16 @@ class ListingsPage(ctk.CTkFrame):
             entry.insert(0, row[key] or "")
         self.description.delete("1.0", "end")
         self.description.insert("1.0", row["Description"] or "")
+        self.price_entry.delete(0, "end")
+        if row["PriceCents"] is not None:
+            self.price_entry.insert(0, format_price(row["PriceCents"]).replace("$", "").replace(",", ""))
         self.set_actions()
         self.show_status(f"Editing listing #{self.selected_id}.")
 
     def values(self):
         return (self.options.get(self.freelancer.get()), self.title_entry.get(),
-                self.description.get("1.0", "end-1c"), self.skills_entry.get(), self.category_entry.get())
+                self.description.get("1.0", "end-1c"), self.skills_entry.get(), self.category_entry.get(),
+                parse_price(self.price_entry.get()))
 
     def report_error(self, exc):
         if isinstance(exc, sqlite3.IntegrityError):

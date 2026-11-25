@@ -1,5 +1,7 @@
 """Non-destructive listing migration, CRUD, and search for the marketplace."""
 import sqlite3
+import re
+from decimal import Decimal
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -34,6 +36,7 @@ def connection():
 def initialize_listings():
     """Create just the new table. Safe to run repeatedly; no DROP statements."""
     with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         # Check the existing parent table before attempting the migration.
         conn.execute("SELECT FreelancerID, Name FROM freelancers LIMIT 0")
         conn.execute("""
@@ -45,10 +48,14 @@ def initialize_listings():
                 Skills TEXT NOT NULL CHECK(length(trim(Skills)) > 0),
                 Category TEXT NOT NULL DEFAULT '',
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PriceCents INTEGER CHECK(PriceCents IS NULL OR (typeof(PriceCents) = 'integer' AND PriceCents BETWEEN 0 AND 999999999)),
                 FOREIGN KEY (FreelancerID) REFERENCES freelancers(FreelancerID)
                     ON DELETE RESTRICT
             )
         """)
+        columns = {row[1].lower() for row in conn.execute("PRAGMA table_info(listings)")}
+        if "pricecents" not in columns:
+            conn.execute("ALTER TABLE listings ADD COLUMN PriceCents INTEGER CHECK(PriceCents IS NULL OR (typeof(PriceCents) = 'integer' AND PriceCents BETWEEN 0 AND 999999999))")
         # Report an incompatible pre-existing table instead of overwriting it.
         conn.execute("SELECT ListingID, FreelancerID, JobTitle, Description, Skills, Category, CreatedAt FROM listings LIMIT 0")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_freelancer ON listings(FreelancerID)")
@@ -66,7 +73,7 @@ def get_listings():
     with connection() as conn:
         return [dict(row) for row in conn.execute("""
             SELECT l.ListingID, l.FreelancerID, f.Name, l.JobTitle,
-                   l.Description, l.Skills, l.Category, l.CreatedAt
+                   l.Description, l.Skills, l.Category, l.CreatedAt, l.PriceCents
             FROM listings AS l
             JOIN freelancers AS f ON f.FreelancerID = l.FreelancerID
             ORDER BY l.ListingID DESC
@@ -110,23 +117,44 @@ def _validate(freelancer_id, job_title, description, skills, category):
     return (freelancer_id, *fields)
 
 
-def create_listing(freelancer_id, job_title, description, skills, category=""):
+def parse_price(text):
+    """Convert a decimal USD amount to exact integer cents."""
+    text = text.strip()
+    if not re.fullmatch(r"[0-9]{1,7}(?:\.[0-9]{1,2})?", text):
+        raise ValueError("Enter a price in USD (for example 125.50), with at most two decimal places.")
+    cents = int(Decimal(text) * 100)
+    return validate_price_cents(cents)
+
+
+def validate_price_cents(cents):
+    if type(cents) is not int or not 0 <= cents <= 999999999:
+        raise ValueError("Price must be between $0.00 and $9,999,999.99.")
+    return cents
+
+
+def format_price(cents):
+    if cents is None:
+        return "Price not set"
+    return f"${cents // 100:,}.{cents % 100:02d}"
+
+
+def create_listing(freelancer_id, job_title, description, skills, category="", price_cents=None):
     values = _validate(freelancer_id, job_title, description, skills, category)
     with connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO listings (FreelancerID, JobTitle, Description, Skills, Category)
-            VALUES (?, ?, ?, ?, ?)
-        """, values)
+            INSERT INTO listings (FreelancerID, JobTitle, Description, Skills, Category, PriceCents)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (*values, None if price_cents is None else validate_price_cents(price_cents)))
         return cursor.lastrowid
 
 
-def update_listing(listing_id, freelancer_id, job_title, description, skills, category=""):
+def update_listing(listing_id, freelancer_id, job_title, description, skills, category="", price_cents=None):
     values = _validate(freelancer_id, job_title, description, skills, category)
     with connection() as conn:
         cursor = conn.execute("""
             UPDATE listings SET FreelancerID = ?, JobTitle = ?, Description = ?,
-                                Skills = ?, Category = ? WHERE ListingID = ?
-        """, (*values, listing_id))
+                                Skills = ?, Category = ?, PriceCents = COALESCE(?, PriceCents) WHERE ListingID = ?
+        """, (*values, None if price_cents is None else validate_price_cents(price_cents), listing_id))
         return cursor.rowcount
 
 

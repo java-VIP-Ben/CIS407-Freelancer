@@ -15,6 +15,7 @@ from backend.client_auth import (
     initialize_auth, authenticate_admin, authenticate_client,
     authenticate_freelancer, register_client, register_freelancer,
 )
+from backend.listings_database import format_price
 from frontend.admin_page import AdminPage
 from frontend.proposal_page import FreelancerProposalsPage
 
@@ -395,9 +396,13 @@ class App(ctk.CTk):
             )
             return
 
+        if listing.get("PriceCents") is None:
+            messagebox.showerror("Price Required", "This listing does not have a price yet.", parent=self)
+            return
+
         dialog = ctk.CTkToplevel(self)
         dialog.title("Invite Freelancer to Project")
-        dialog.geometry("500x265")
+        dialog.geometry("500x310")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -410,8 +415,8 @@ class App(ctk.CTk):
         ).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 4))
         ctk.CTkLabel(
             dialog,
-            text=f"Choose which project '{listing['JobTitle']}' is for.",
-            anchor="w",
+            text=f"Choose which project '{listing['JobTitle']}' is for.\nFixed price: {format_price(listing['PriceCents'])} USD",
+            anchor="w", justify="left", wraplength=450,
         ).grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 12))
 
         project_options = {}
@@ -456,7 +461,8 @@ class App(ctk.CTk):
 
             try:
                 proposal_id = create_project_proposal(
-                    project_id, listing["FreelancerID"], client_id
+                    project_id, listing["FreelancerID"], client_id,
+                    listing_id=listing["ListingID"], expected_price_cents=listing["PriceCents"],
                 )
             except (sqlite3.Error, ValueError) as exc:
                 messagebox.showerror(

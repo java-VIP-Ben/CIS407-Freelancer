@@ -74,6 +74,7 @@ cur.execute("""
         ProjectID INTEGER,
         FreelancerID INTEGER REFERENCES freelancers(FreelancerID),
         Status TEXT NOT NULL DEFAULT 'pending' CHECK(Status IN ('pending','accepted','declined')),
+        PriceCents INTEGER CHECK(PriceCents IS NULL OR (typeof(PriceCents) = 'integer' AND PriceCents BETWEEN 0 AND 999999999)),
         DateCreated DATETIME DEFAULT CURRENT_TIMESTAMP,
         DateUpdated DATE,
 

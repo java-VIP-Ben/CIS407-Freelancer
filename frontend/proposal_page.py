@@ -5,6 +5,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from backend.database import get_freelancer_proposals, respond_to_project_proposal
+from backend.listings_database import format_price
 
 
 class FreelancerProposalsPage(ctk.CTkFrame):
@@ -38,7 +39,7 @@ class FreelancerProposalsPage(ctk.CTkFrame):
             self.status.configure(text="Sign in as a freelancer to view proposals.")
             return False
         try:
-            proposals = get_freelancer_proposals(freelancer_id)
+            proposals = get_freelancer_proposals(freelancer_id, include_price=True)
         except (sqlite3.Error, ValueError) as exc:
             self.status.configure(text=f"Unable to load proposals: {exc}")
             return False
@@ -62,7 +63,7 @@ class FreelancerProposalsPage(ctk.CTkFrame):
             widget.destroy()
 
     def create_card(self, index, proposal):
-        proposal_id, proposal_name, project_id, project_name, client_id, client_name, status = proposal
+        proposal_id, proposal_name, project_id, project_name, client_id, client_name, status, price_cents = proposal
         card = ctk.CTkFrame(
             self.scroll_frame, corner_radius=12, border_width=1,
             border_color=("gray82", "gray28"),
@@ -82,7 +83,7 @@ class FreelancerProposalsPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=11, weight="bold"),
         ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
         ctk.CTkLabel(
-            card, text=f"{client} invited you to join this project.",
+            card, text=f"{client} invited you to join this project.\nOffered price: {format_price(price_cents)}",
             anchor="w", justify="left", wraplength=650,
         ).grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 8))
 
