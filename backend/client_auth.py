@@ -102,6 +102,40 @@ def register_client(name, email, address, phone, password):
         return conn.execute('''INSERT INTO clients (Name, Email, Address, Phone, PasswordHash)
             VALUES (?, ?, ?, ?, ?)''', (name, email, address, phone, encoded)).lastrowid
 
+def register_freelancer(name, email, phone, password):
+    name, phone = name.strip(), phone.strip()
+
+    if not name or len(name) > 50 or not phone:
+        raise ValueError(
+            "Enter name (up to 50 characters) and phone."
+        )
+
+    email = normalize_email(email)
+    encoded = hash_password(password)
+
+    initialize_auth()
+
+    with connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        if conn.execute(
+            """
+            SELECT 1 FROM freelancers
+            WHERE lower(trim(Email)) = ?
+            """,
+            (email,)
+        ).fetchone():
+            raise ValueError(
+                "Email already belongs to a freelancer. "
+                "Ask the administrator to activate your account."
+            )
+
+        return conn.execute("""
+            INSERT INTO freelancers (
+                Name, Email, Phone, PasswordHash
+            )
+            VALUES (?, ?, ?, ?)
+        """, (name, email, phone, encoded)).lastrowid
 
 def authenticate_account(role, email, password):
     table, pk = ACCOUNTS[role]

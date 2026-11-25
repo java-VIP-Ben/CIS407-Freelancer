@@ -13,7 +13,7 @@ from backend.database import (
 )
 from backend.client_auth import (
     initialize_auth, authenticate_admin, authenticate_client,
-    authenticate_freelancer, register_client,
+    authenticate_freelancer, register_client, register_freelancer,
 )
 from frontend.admin_page import AdminPage
 from frontend.proposal_page import FreelancerProposalsPage
@@ -124,10 +124,12 @@ class App(ctk.CTk):
         self.login_error.grid(row=4, column=0, padx=30, pady=(2, 8))
         ctk.CTkButton(form, text="Login", width=260, command=self.attempt_login).grid(
             row=5, column=0, padx=30, pady=(5, 8))
-        ctk.CTkButton(form, text="Create Client Account", width=260,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.show_page("register")).grid(
-            row=6, column=0, padx=30, pady=(5, 24))
+        self.register_button = ctk.CTkButton(
+            form, text="Create Client Account", width=260,
+            fg_color="transparent", border_width=1,
+            command=self.open_registration,
+        )
+        self.register_button.grid(row=6, column=0, padx=30, pady=(5, 24))
         self.username_entry.bind("<Return>", self.attempt_login)
         self.password_entry.bind("<Return>", self.attempt_login)
         return page
@@ -138,9 +140,12 @@ class App(ctk.CTk):
         page.grid_columnconfigure(0, weight=1)
         form = ctk.CTkFrame(page, corner_radius=12)
         form.grid(row=0, column=0, padx=20, pady=16)
-        ctk.CTkLabel(form, text="Create Client Account",
-                     font=ctk.CTkFont(size=24, weight="bold")).grid(
-            row=0, column=0, padx=30, pady=(20, 10))
+        self.register_role = "Client"
+        self.register_heading = ctk.CTkLabel(
+            form, text="Create Client Account",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        )
+        self.register_heading.grid(row=0, column=0, padx=30, pady=(20, 10))
         self.register_entries = {}
         fields = (("name", "Full name"), ("email", "Email address"),
                   ("address", "Address"), ("phone", "Phone"),
@@ -161,10 +166,36 @@ class App(ctk.CTk):
         self.register_entries["confirm"].bind("<Return>", self.attempt_register)
         return page
 
+    def update_registration_button(self):
+        role = self.login_role.get()
+        if role in ("Client", "Freelancer"):
+            self.register_button.configure(text=f"Create {role} Account", state="normal")
+            self.register_button.grid()
+        else:
+            self.register_button.configure(state="disabled")
+            self.register_button.grid_remove()
+
+    def open_registration(self):
+        role = self.login_role.get()
+        if self.current_role is not None or role not in ("Client", "Freelancer"):
+            return
+        self.clear_registration()
+        self.clear_login_fields()
+        self.login_error.configure(text="")
+        self.register_role = role
+        self.register_heading.configure(text=f"Create {role} Account")
+        if role == "Freelancer":
+            self.register_entries["address"].grid_remove()
+        else:
+            self.register_entries["address"].grid()
+        self.show_page("register")
+
     def clear_registration(self):
         for entry in self.register_entries.values():
-            entry.delete(0, "end")
+            if entry.get():
+                entry.delete(0, "end")
         self.register_error.configure(text="")
+        self.restore_auth_placeholders()
 
     def cancel_registration(self):
         self.clear_registration()
@@ -178,29 +209,62 @@ class App(ctk.CTk):
             if data["password"] != data["confirm"]:
                 raise ValueError("Passwords do not match.")
             initialize_project_workflow()
-            register_client(data["name"], data["email"], data["address"],
-                            data["phone"], data["password"])
+            if self.register_role == "Client":
+                register_client(data["name"], data["email"], data["address"],
+                                data["phone"], data["password"])
+            elif self.register_role == "Freelancer":
+                register_freelancer(data["name"], data["email"],
+                                    data["phone"], data["password"])
+            else:
+                raise ValueError("Invalid registration account type.")
         except (sqlite3.Error, ValueError) as exc:
             self.register_error.configure(text=str(exc))
             return
         finally:
             for key in ("password", "confirm"):
-                self.register_entries[key].delete(0, "end")
+                entry = self.register_entries[key]
+                if entry.get():
+                    entry.delete(0, "end")
+            self.restore_auth_placeholders()
         self.clear_registration()
-        self.login_role.set("Client")
-        self.username_entry.delete(0, "end")
+        self.login_role.set(self.register_role)
+        self.clear_login_fields()
         self.username_entry.insert(0, data["email"].strip())
         self.show_page("login")
         self.login_error.configure(text="Account created. Sign in with your password.")
 
+    def restore_auth_placeholders(self):
+        """Refresh empty auth fields once the page is mapped and focus has settled."""
+        self.focus_set()
+        self.after_idle(self.refresh_auth_placeholders)
+
+    def refresh_auth_placeholders(self):
+        if self.current_role is not None:
+            return
+        focused = self.focus_get()
+        entries = [(self.username_entry, False), (self.password_entry, True)]
+        entries.extend((entry, key in ("password", "confirm"))
+                       for key, entry in self.register_entries.items())
+        for entry, masked in entries:
+            # Do not interfere if the user has already started typing or focused a field.
+            if entry.get() or focused is entry or getattr(focused, "master", None) is entry:
+                continue
+            entry.configure(placeholder_text=entry.cget("placeholder_text"))
+            if masked:
+                # CTkEntry remembers the mask while its placeholder is visible.
+                entry.configure(show="*")
+
     def clear_login_fields(self):
-        self.username_entry.delete(0, "end")
-        self.password_entry.delete(0, "end")
+        for entry in (self.username_entry, self.password_entry):
+            if entry.get():
+                entry.delete(0, "end")
+        self.restore_auth_placeholders()
 
     def on_login_role_change(self, _role):
         self.clear_login_fields()
         self.login_error.configure(text="")
-        self.username_entry.focus_set()
+        self.update_registration_button()
+        self.restore_auth_placeholders()
 
     def attempt_login(self, event=None):
         if self.current_role is not None:
@@ -227,7 +291,6 @@ class App(ctk.CTk):
             return
         finally:
             self.clear_login_fields()
-            self.username_entry.focus_set()
         self.current_user = account["Name"] or username
         self.current_client_id = account.get("ClientID") if role == "client" else None
         self.current_freelancer_id = account.get("FreelancerID") if role == "freelancer" else None
@@ -241,8 +304,7 @@ class App(ctk.CTk):
         self.current_client_id = None
         self.current_freelancer_id = None
         self.current_role = None
-        self.username_entry.delete(0, "end")
-        self.password_entry.delete(0, "end")
+        self.clear_login_fields()
         self.login_error.configure(text="")
         self.login_role.set("Client")
         self.clear_registration()
@@ -285,7 +347,6 @@ class App(ctk.CTk):
             target_page = "login" if role is None else ("freelancer_projects" if role == "freelancer" else "home")
         if role is None:
             self.nav_bar.grid_remove()
-            self.password_entry.delete(0, "end")
         else:
             self.nav_bar.grid(row=0, column=0, sticky="ew")
         nav_target = "my_projects" if target_page in ("client_projects", "freelancer_projects") else target_page
@@ -297,7 +358,10 @@ class App(ctk.CTk):
         for name, button in self.nav_buttons.items():
             button.configure(fg_color=("gray75", "gray25") if name == nav_target else "transparent")
         if target_page == "login":
-            self.after_idle(self.username_entry.focus_set)
+            self.update_registration_button()
+            self.restore_auth_placeholders()
+        elif target_page == "register":
+            self.restore_auth_placeholders()
         elif target_page in ("home", "listings", "projects", "client_projects",
                              "freelancer_projects", "proposals", "admin"):
             self.pages[target_page].on_show()
