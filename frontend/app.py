@@ -9,7 +9,7 @@ if __name__ == "__main__" and not __package__:
 import customtkinter as ctk
 from frontend.admin_page import AdminPage
 
-from backend.database import get_freelancers
+from frontend.listings_page import ListingsHome, ListingsPage
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -20,7 +20,7 @@ class App(ctk.CTk):
         super().__init__()
         self.title("Freelancer")
         self.geometry("1080x720")
-        self.minsize(780, 540)
+        self.minsize(860, 600)
         self.current_user = None
 
         self.grid_columnconfigure(0, weight=1)
@@ -32,7 +32,7 @@ class App(ctk.CTk):
             side="left", padx=20, pady=14
         )
         self.nav_buttons = {}
-        for page_name in ("home", "projects", "admin", "settings"):
+        for page_name in ("home", "listings", "projects", "admin", "settings"):
             button = ctk.CTkButton(
                 nav_bar,
                 text=page_name.title(),
@@ -58,7 +58,8 @@ class App(ctk.CTk):
 
         self.pages = {
             "login": self.login_page(self.main_container),
-            "home": self.home_page(self.main_container),
+            "home": ListingsHome(self.main_container, self.book_listing),
+            "listings": ListingsPage(self.main_container),
             "projects": self.project_page(self.main_container),
             "admin": AdminPage(self.main_container),
             "settings": self.settings_page(self.main_container),
@@ -93,7 +94,7 @@ class App(ctk.CTk):
     def attempt_login(self, event=None):
         username = self.username_entry.get().strip()
         password = self.password_entry.get()
-        # Demo credentials retained from app(6).py. Not production authentication.
+        # Demo credentials retained from the original login. Not production authentication.
         if username == "admin" and password == "admin":
             self.login_error.configure(text="")
             self.password_entry.delete(0, "end")
@@ -110,18 +111,6 @@ class App(ctk.CTk):
         self.password_entry.delete(0, "end")
         self.login_error.configure(text="")
         self.show_page("login")
-
-    def home_page(self, master):
-        page = ctk.CTkFrame(master, corner_radius=0)
-        page.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(page, text="Find Your Freelancer", font=ctk.CTkFont(size=24, weight="bold")).pack(
-            anchor="w", padx=20, pady=(20, 10)
-        )
-        self.scroll_frame = ctk.CTkScrollableFrame(page, fg_color="transparent")
-        self.scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        self.scroll_frame.grid_columnconfigure(0, weight=1)
-        return page
-
 
     def project_page(self, master):
         page = ctk.CTkFrame(master, corner_radius=0)
@@ -149,6 +138,9 @@ class App(ctk.CTk):
         return page
 
     def show_page(self, target_page):
+        if target_page not in self.pages:
+            raise ValueError(f"Unknown page: {target_page}")
+
         # Do not allow navigation to application pages until signed in.
         if target_page != "login" and self.current_user is None:
             target_page = "login"
@@ -171,51 +163,15 @@ class App(ctk.CTk):
 
         if target_page == "login":
             self.after_idle(self.username_entry.focus_set)
-        elif target_page == "home":
-            self.refresh_freelancers()
-        elif target_page == "admin":
-            self.pages["admin"].on_show()
+        elif target_page in ("home", "listings", "admin"):
+            self.pages[target_page].on_show()
 
-    def refresh_freelancers(self):
-        try:
-            freelancers = get_freelancers()
-        except Exception as exc:
-            messagebox.showerror("Database Error", str(exc))
-            return
-
-        for child in self.scroll_frame.winfo_children():
-            child.destroy()
-
-        if not freelancers:
-            ctk.CTkLabel(self.scroll_frame, text="No freelancers registered yet.").grid(
-                row=0, column=0, padx=20, pady=20
-            )
-            return
-
-        # freelancers schema: FreelancerID, Name, SkillsListID, Email, Phone, ReviewsID
-        for index, record in enumerate(freelancers):
-            freelancer_id, name, _, email, _, _ = record
-            self.create_freelancer_card(index, freelancer_id, name, email)
-
-    def create_freelancer_card(self, index, freelancer_id, name, email):
-        card = ctk.CTkFrame(self.scroll_frame, corner_radius=8)
-        card.grid(row=index, column=0, padx=10, pady=6, sticky="ew")
-        card.grid_columnconfigure(0, weight=2)
-        card.grid_columnconfigure(1, weight=2)
-        ctk.CTkLabel(card, text=name or "Unnamed freelancer",
-                     font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
-            row=0, column=0, padx=15, pady=12, sticky="w"
+    def book_listing(self, listing):
+        messagebox.showinfo(
+            "Booking",
+            f"Booking for {listing['JobTitle']} (listing #{listing['ListingID']}) is coming soon.",
+            parent=self,
         )
-        ctk.CTkLabel(card, text=email or "No email", text_color="gray", anchor="w").grid(
-            row=0, column=1, padx=10, pady=12, sticky="w"
-        )
-        ctk.CTkButton(card, text="Book", width=90,
-                      command=lambda fid=freelancer_id: self.book_freelancer(fid)).grid(
-            row=0, column=2, padx=15, pady=12
-        )
-
-    def book_freelancer(self, freelancer_id):
-        messagebox.showinfo("Booking", f"Booking for freelancer #{freelancer_id} is coming soon.")
 
 
 if __name__ == "__main__":
