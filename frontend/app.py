@@ -22,7 +22,7 @@ from frontend.proposal_page import FreelancerProposalsPage
 from frontend.listings_page import ListingsHome, ListingsPage
 
 from frontend.project_page import (
-    ClientProjectsPage, FreelancerProjectsPage, ProjectsHome,
+    ClientProjectsPage, FreelancerProjectsPage, ProjectDetailPage, ProjectsHome,
 )
 
 ctk.set_appearance_mode("System")
@@ -85,12 +85,21 @@ class App(ctk.CTk):
             "register": self.registration_page(self.main_container),
             "home": ListingsHome(self.main_container, self.book_listing),
             "listings": ListingsPage(self.main_container),
+            "freelancer_listings": ListingsPage(
+                self.main_container,
+                lambda: self.current_freelancer_id,
+            ),
             "projects": ProjectsHome(self.main_container),
             "client_projects": ClientProjectsPage(
-                self.main_container, lambda: self.current_client_id
+                self.main_container, lambda: self.current_client_id,
+                self.show_project_detail,
             ),
             "freelancer_projects": FreelancerProjectsPage(
-                self.main_container, lambda: self.current_freelancer_id
+                self.main_container, lambda: self.current_freelancer_id,
+                self.show_project_detail,
+            ),
+            "project_detail": ProjectDetailPage(
+                self.main_container, lambda: self.show_page("my_projects")
             ),
             "proposals": FreelancerProposalsPage(
                 self.main_container, lambda: self.current_freelancer_id
@@ -316,11 +325,15 @@ class App(ctk.CTk):
     def update_nav_access(self):
         allowed = {
             "client": {"home", "my_projects", "settings"},
-            "freelancer": {"my_projects", "proposals", "settings"},
+            "freelancer": {"my_projects", "proposals", "listings", "settings"},
             "admin": {"home", "listings", "projects", "admin", "settings"},
         }.get(self.current_role, set())
         for name, button in self.nav_buttons.items():
             button.configure(state="normal" if name in allowed else "disabled")
+        if "listings" in self.nav_buttons:
+            self.nav_buttons["listings"].configure(
+                text="My Listings" if self.current_role == "freelancer" else "Listings"
+            )
 
     def settings_page(self, master):
         page = ctk.CTkFrame(master, corner_radius=0)
@@ -336,12 +349,14 @@ class App(ctk.CTk):
         role = self.current_role
         if target_page == "my_projects":
             target_page = {"client": "client_projects", "freelancer": "freelancer_projects"}.get(role, "home")
+        if target_page == "listings" and role == "freelancer":
+            target_page = "freelancer_listings"
         if target_page not in self.pages:
             raise ValueError(f"Unknown page: {target_page}")
         allowed = {
             None: {"login", "register"},
-            "client": {"home", "client_projects", "settings"},
-            "freelancer": {"freelancer_projects", "proposals", "settings"},
+            "client": {"home", "client_projects", "project_detail", "settings"},
+            "freelancer": {"freelancer_projects", "project_detail", "freelancer_listings", "proposals", "settings"},
             "admin": {"home", "listings", "projects", "admin", "settings"},
         }.get(role, {"login"})
         if target_page not in allowed:
@@ -350,7 +365,11 @@ class App(ctk.CTk):
             self.nav_bar.grid_remove()
         else:
             self.nav_bar.grid(row=0, column=0, sticky="ew")
-        nav_target = "my_projects" if target_page in ("client_projects", "freelancer_projects") else target_page
+        nav_target = "my_projects" if target_page in (
+            "client_projects", "freelancer_projects", "project_detail"
+        ) else (
+            "listings" if target_page == "freelancer_listings" else target_page
+        )
         for name, page in self.pages.items():
             if name == target_page:
                 page.grid(row=0, column=0, sticky="nsew")
@@ -363,9 +382,24 @@ class App(ctk.CTk):
             self.restore_auth_placeholders()
         elif target_page == "register":
             self.restore_auth_placeholders()
-        elif target_page in ("home", "listings", "projects", "client_projects",
-                             "freelancer_projects", "proposals", "admin"):
+        elif target_page in ("home", "listings", "freelancer_listings", "projects",
+                             "client_projects", "freelancer_projects",
+                             "project_detail", "proposals", "admin"):
             self.pages[target_page].on_show()
+
+    def show_project_detail(self, project_id, project_name):
+        if self.current_role == "client":
+            account_id = self.current_client_id
+        elif self.current_role == "freelancer":
+            account_id = self.current_freelancer_id
+        else:
+            return
+        if account_id is None:
+            return
+        self.pages["project_detail"].set_project(
+            project_id, project_name, self.current_role, account_id
+        )
+        self.show_page("project_detail")
 
     def book_listing(self, listing):
         if self.current_role != "client" or self.current_client_id is None:

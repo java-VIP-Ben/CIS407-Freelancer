@@ -14,6 +14,7 @@
 #
 
 
+from datetime import datetime
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
@@ -441,6 +442,22 @@ def initialize_project_workflow():
                 raise ValueError(f'Missing {table} table.')
             if column.lower() not in columns:
                 conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+        milestone_columns = {
+            row[1].lower() for row in conn.execute('PRAGMA table_info(milestones)')
+        }
+        project_columns = {
+            row[1].lower() for row in conn.execute('PRAGMA table_info(projects)')
+        }
+        if milestone_columns and {'projectid', 'milestonesid'} <= project_columns:
+            conn.execute('''CREATE TABLE IF NOT EXISTS project_milestones (
+                ProjectID INTEGER NOT NULL REFERENCES projects(ProjectID) ON DELETE CASCADE,
+                MilestonesID INTEGER NOT NULL REFERENCES milestones(MilestonesID) ON DELETE CASCADE,
+                PRIMARY KEY (ProjectID, MilestonesID)
+            )''')
+            conn.execute('''INSERT OR IGNORE INTO project_milestones (ProjectID, MilestonesID)
+                SELECT p.ProjectID, p.MilestonesID FROM projects p
+                JOIN milestones m ON m.MilestonesID=p.MilestonesID
+                WHERE p.MilestonesID IS NOT NULL''')
 
 
 def create_client_project(client_id, project_name):
@@ -451,6 +468,20 @@ def create_client_project(client_id, project_name):
         if client_id is None or not conn.execute('SELECT 1 FROM clients WHERE ClientID=?', (client_id,)).fetchone():
             raise ValueError('A valid client account is required.')
         return conn.execute('INSERT INTO projects (ClientID, ProjectName) VALUES (?, ?)', (client_id, name)).lastrowid
+
+
+def update_client_project(client_id, project_id, project_name):
+    if not isinstance(project_name, str):
+        raise ValueError('Enter a project name (1–120 characters).')
+    name = project_name.strip()
+    if not name or len(name) > 120:
+        raise ValueError('Enter a project name (1–120 characters).')
+    with workflow_connection() as conn:
+        cursor = conn.execute(
+            'UPDATE projects SET ProjectName=? WHERE ProjectID=? AND ClientID=?',
+            (name, project_id, client_id),
+        )
+        return cursor.rowcount
 
 
 def get_projects_for_client(client_id, include_price=False):
@@ -469,6 +500,102 @@ def get_projects_for_freelancer(freelancer_id, include_price=False):
             FROM projects p LEFT JOIN clients c ON c.ClientID=p.ClientID
             LEFT JOIN proposals r ON r.ProposalID=p.ProposalID AND r.ProjectID=p.ProjectID AND r.Status='accepted' AND r.FreelancerID=p.FreelancerID
             WHERE p.FreelancerID=? ORDER BY p.ProjectID DESC''', (freelancer_id,)).fetchall()
+
+
+def _validate_milestone_progress(progress):
+    if isinstance(progress, bool) or not isinstance(progress, (int, float)):
+        raise ValueError('Milestone progress must be a number from 0 to 100.')
+    if not 0 <= progress <= 100:
+        raise ValueError('Milestone progress must be between 0 and 100.')
+    return float(progress)
+
+
+def get_project_summaries(role, account_id):
+    project_owner = {'client': 'ClientID', 'freelancer': 'FreelancerID'}.get(role)
+    if project_owner is None:
+        raise ValueError('Invalid account role.')
+    if not isinstance(account_id, int) or isinstance(account_id, bool):
+        raise ValueError('A valid account is required.')
+    with workflow_connection() as conn:
+        rows = conn.execute(f'''SELECT p.ProjectID, p.ProjectName, m.MilestonesID,
+                m.MilestoneName, m.PercentageCompleted, m.DateStarted
+            FROM projects p
+            LEFT JOIN project_milestones pm ON pm.ProjectID=p.ProjectID
+            LEFT JOIN milestones m ON m.MilestonesID=pm.MilestonesID
+            WHERE p.{project_owner}=?
+            ORDER BY p.ProjectID DESC, m.MilestonesID''', (account_id,)).fetchall()
+    projects = {}
+    for project_id, name, milestone_id, milestone_name, progress, date_started in rows:
+        project = projects.setdefault(project_id, {
+            'ProjectID': project_id, 'ProjectName': name,
+            'Milestones': [], 'Progress': 0,
+        })
+        if milestone_id is not None:
+            percentage = _validate_milestone_progress(
+                progress if progress is not None else 0
+            )
+            project['Milestones'].append({
+                'MilestonesID': milestone_id,
+                'MilestoneName': milestone_name,
+                'PercentageCompleted': percentage,
+                'DateStarted': date_started,
+            })
+    for project in projects.values():
+        milestones = project['Milestones']
+        if milestones:
+            project['Progress'] = round(
+                sum(item['PercentageCompleted'] for item in milestones) / len(milestones)
+            )
+    return list(projects.values())
+
+
+def create_project_milestone(project_id, role, account_id, name, progress=0, date_started=None):
+    if role != 'client':
+        raise ValueError('Only clients can update project milestones.')
+    project_owner = 'ClientID'
+    if not isinstance(account_id, int) or isinstance(account_id, bool):
+        raise ValueError('A valid account is required.')
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+        raise ValueError('Enter a milestone name (1–120 characters).')
+    progress = _validate_milestone_progress(progress)
+    if date_started:
+        try:
+            datetime.strptime(date_started, '%Y-%m-%d')
+        except (TypeError, ValueError):
+            raise ValueError('Start date must use YYYY-MM-DD format.') from None
+    with workflow_connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        if not conn.execute(
+            f'SELECT 1 FROM projects WHERE ProjectID=? AND {project_owner}=?',
+            (project_id, account_id),
+        ).fetchone():
+            raise ValueError('Project does not belong to this account.')
+        milestone_id = conn.execute('''INSERT INTO milestones
+            (MilestoneName, PercentageCompleted, DateStarted) VALUES (?, ?, ?)''',
+            (name.strip(), progress, date_started or None)).lastrowid
+        conn.execute(
+            'INSERT INTO project_milestones (ProjectID, MilestonesID) VALUES (?, ?)',
+            (project_id, milestone_id),
+        )
+        return milestone_id
+
+
+def update_project_milestone_progress(project_id, milestone_id, role, account_id, progress):
+    if role != 'client':
+        raise ValueError('Only clients can update project milestones.')
+    project_owner = 'ClientID'
+    if not isinstance(account_id, int) or isinstance(account_id, bool):
+        raise ValueError('A valid account is required.')
+    progress = _validate_milestone_progress(progress)
+    with workflow_connection() as conn:
+        cursor = conn.execute(f'''UPDATE milestones
+            SET PercentageCompleted=?, DateUpdated=CURRENT_TIMESTAMP
+            WHERE MilestonesID=? AND EXISTS (
+                SELECT 1 FROM project_milestones pm
+                JOIN projects p ON p.ProjectID=pm.ProjectID
+                WHERE pm.MilestonesID=? AND p.ProjectID=? AND p.{project_owner}=?
+            )''', (progress, milestone_id, milestone_id, project_id, account_id))
+        return cursor.rowcount
 
 
 def create_project_proposal(project_id, freelancer_id, client_id, *, listing_id=None, expected_price_cents=None):

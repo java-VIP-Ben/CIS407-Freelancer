@@ -2,6 +2,7 @@
 import sqlite3
 import tempfile
 import unittest
+import gc
 from pathlib import Path
 from backend import listings_database as db
 
@@ -10,6 +11,7 @@ class ListingsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        self.addCleanup(gc.collect)
         original = db.DB_NAME
         self.addCleanup(setattr, db, "DB_NAME", original)
         db.DB_NAME = Path(self.temp.name) / "test.db"
@@ -45,6 +47,32 @@ class ListingsTests(unittest.TestCase):
         self.assertEqual(db.delete_listing(a), 0)
         self.assertEqual(len(db.get_listings()), 1)
         self.assertEqual(len(db.get_freelancer_options()), 2)
+
+    def test_freelancer_scoped_listings(self):
+        a, b = self.seed()
+        self.assertEqual(
+            [row["ListingID"] for row in db.get_listings_for_freelancer(5)],
+            [a],
+        )
+        self.assertEqual(
+            db.update_listing_for_freelancer(
+                b, 5, "Wrong owner", "Wrong owner", "Wrong owner"
+            ),
+            0,
+        )
+        self.assertEqual(db.delete_listing_for_freelancer(b, 5), 0)
+        self.assertEqual(
+            db.update_listing_for_freelancer(
+                a, 5, "Freelancer title", "Freelancer description",
+                "Freelancer skill", "Freelancer category", 2500
+            ),
+            1,
+        )
+        row = db.get_listings_for_freelancer(5)[0]
+        self.assertEqual(row["JobTitle"], "Freelancer title")
+        self.assertEqual(row["PriceCents"], 2500)
+        self.assertEqual(db.delete_listing_for_freelancer(a, 5), 1)
+        self.assertEqual([row["ListingID"] for row in db.get_listings_for_freelancer(5)], [])
 
     def test_every_search_field_and_multiword_search(self):
         a, b = self.seed()

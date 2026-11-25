@@ -80,6 +80,20 @@ def get_listings():
         """)]
 
 
+def get_listings_for_freelancer(freelancer_id):
+    if not isinstance(freelancer_id, int) or isinstance(freelancer_id, bool):
+        raise ValueError("Select a freelancer.")
+    with connection() as conn:
+        return [dict(row) for row in conn.execute("""
+            SELECT l.ListingID, l.FreelancerID, f.Name, l.JobTitle,
+                   l.Description, l.Skills, l.Category, l.CreatedAt, l.PriceCents
+            FROM listings AS l
+            JOIN freelancers AS f ON f.FreelancerID = l.FreelancerID
+            WHERE l.FreelancerID = ?
+            ORDER BY l.ListingID DESC
+        """, (freelancer_id,))]
+
+
 def filter_listings(rows, query="", field="All fields"):
     """Literal, Unicode-aware, case-insensitive matching. All words must match."""
     if field not in SEARCH_FIELDS:
@@ -158,9 +172,31 @@ def update_listing(listing_id, freelancer_id, job_title, description, skills, ca
         return cursor.rowcount
 
 
+def update_listing_for_freelancer(listing_id, freelancer_id, job_title, description, skills, category="", price_cents=None):
+    values = _validate(freelancer_id, job_title, description, skills, category)
+    with connection() as conn:
+        cursor = conn.execute("""
+            UPDATE listings SET JobTitle = ?, Description = ?, Skills = ?,
+                                Category = ?, PriceCents = COALESCE(?, PriceCents)
+            WHERE ListingID = ? AND FreelancerID = ?
+        """, (*values[1:], None if price_cents is None else validate_price_cents(price_cents),
+              listing_id, freelancer_id))
+        return cursor.rowcount
+
+
 def delete_listing(listing_id):
     with connection() as conn:
         return conn.execute("DELETE FROM listings WHERE ListingID = ?", (listing_id,)).rowcount
+
+
+def delete_listing_for_freelancer(listing_id, freelancer_id):
+    if not isinstance(freelancer_id, int) or isinstance(freelancer_id, bool):
+        raise ValueError("Select a freelancer.")
+    with connection() as conn:
+        return conn.execute(
+            "DELETE FROM listings WHERE ListingID = ? AND FreelancerID = ?",
+            (listing_id, freelancer_id),
+        ).rowcount
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ import customtkinter as ctk
 
 from backend.listings_database import (
     SEARCH_FIELDS, initialize_listings, get_freelancer_options, get_listings,
-    filter_listings, create_listing, update_listing, delete_listing, parse_price, format_price,
+    get_listings_for_freelancer, filter_listings, create_listing, update_listing,
+    update_listing_for_freelancer, delete_listing, delete_listing_for_freelancer,
+    parse_price, format_price,
 )
 
 
@@ -116,26 +118,33 @@ class ListingsHome(ctk.CTkFrame):
 
 
 class ListingsPage(ctk.CTkFrame):
-    """Create, select, update and delete service listings; not user-specific yet."""
-    def __init__(self, master):
+    """Create, select, update and delete service listings."""
+    def __init__(self, master, freelancer_id_getter=None):
         super().__init__(master, corner_radius=0)
+        self.freelancer_id_getter = freelancer_id_getter
+        self.is_freelancer_mode = freelancer_id_getter is not None
         self.selected_id = None
         self.options = {}
         self.records = {}
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
-        ctk.CTkLabel(self, text="Manage Listings", font=ctk.CTkFont(size=24, weight="bold")).grid(
+        ctk.CTkLabel(self, text="My Listings" if self.is_freelancer_mode else "Manage Listings",
+                     font=ctk.CTkFont(size=24, weight="bold")).grid(
             row=0, column=0, sticky="w", padx=20, pady=(18, 4))
-        ctk.CTkLabel(self, text="Create a service listing or select an existing listing to edit.",
+        ctk.CTkLabel(self, text="Create a service listing or select one of your listings to edit.",
                      anchor="w").grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 8))
         form = ctk.CTkFrame(self, corner_radius=8)
         form.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
         form.grid_columnconfigure(0, weight=1, uniform="fields")
         form.grid_columnconfigure(1, weight=1, uniform="fields")
         self.freelancer = StringVar(master=self, value="Select a freelancer")
-        ctk.CTkLabel(form, text="Freelancer *", anchor="w").grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
+        self.freelancer_label = ctk.CTkLabel(form, text="Freelancer *", anchor="w")
+        self.freelancer_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
         self.freelancer_menu = ctk.CTkOptionMenu(form, values=["Select a freelancer"], variable=self.freelancer)
         self.freelancer_menu.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 4))
+        if self.is_freelancer_mode:
+            self.freelancer_label.grid_remove()
+            self.freelancer_menu.grid_remove()
         self.title_entry = self.entry(form, "Job / title *", 0, 1)
         self.skills_entry = self.entry(form, "Skills * (comma separated)", 2, 0)
         self.category_entry = self.entry(form, "Category (optional)", 2, 1)
@@ -197,19 +206,31 @@ class ListingsPage(ctk.CTkFrame):
     def refresh(self):
         try:
             initialize_listings()
-            options = get_freelancer_options()
-            rows = get_listings()
+            if self.is_freelancer_mode:
+                freelancer_id = self.freelancer_id_getter()
+                if freelancer_id is None:
+                    raise ValueError("Sign in again to manage listings.")
+                options = get_freelancer_options()
+                rows = get_listings_for_freelancer(freelancer_id)
+                names = {row["FreelancerID"]: row["Name"] for row in options}
+                name = names.get(freelancer_id)
+                self.options = {f"#{freelancer_id} — {name or 'Your listing'}": freelancer_id}
+                self.freelancer.set(next(iter(self.options)))
+            else:
+                options = get_freelancer_options()
+                rows = get_listings()
+                self.options = {f"#{row['FreelancerID']} — {row['Name'] or 'Unnamed freelancer'}": row['FreelancerID'] for row in options}
+                self.freelancer_menu.configure(values=list(self.options) or ["No freelancers available"])
         except (sqlite3.Error, ValueError) as exc:
             self.options = {}
             self.records = {}
             self.tree.delete(*self.tree.get_children())
-            self.freelancer_menu.configure(values=["No freelancers available"])
+            if not self.is_freelancer_mode:
+                self.freelancer_menu.configure(values=["No freelancers available"])
             self.clear()
             self.set_actions(False)
             self.show_status(f"Unable to load listings: {exc}", True)
             return False
-        self.options = {f"#{row['FreelancerID']} — {row['Name'] or 'Unnamed freelancer'}": row['FreelancerID'] for row in options}
-        self.freelancer_menu.configure(values=list(self.options) or ["No freelancers available"])
         self.clear()
         self.tree.delete(*self.tree.get_children())
         self.records = {str(row["ListingID"]): row for row in rows}
@@ -249,7 +270,9 @@ class ListingsPage(ctk.CTkFrame):
         self.show_status(f"Editing listing #{self.selected_id}.")
 
     def values(self):
-        return (self.options.get(self.freelancer.get()), self.title_entry.get(),
+        freelancer_id = (self.freelancer_id_getter() if self.is_freelancer_mode
+                         else self.options.get(self.freelancer.get()))
+        return (freelancer_id, self.title_entry.get(),
                 self.description.get("1.0", "end-1c"), self.skills_entry.get(), self.category_entry.get(),
                 parse_price(self.price_entry.get()))
 
@@ -274,7 +297,12 @@ class ListingsPage(ctk.CTkFrame):
         if self.selected_id is None:
             return
         try:
-            count = update_listing(self.selected_id, *self.values())
+            if self.is_freelancer_mode:
+                count = update_listing_for_freelancer(
+                    self.selected_id, *self.values()
+                )
+            else:
+                count = update_listing(self.selected_id, *self.values())
         except (sqlite3.Error, ValueError) as exc:
             self.report_error(exc)
             return
@@ -289,7 +317,12 @@ class ListingsPage(ctk.CTkFrame):
         if not messagebox.askyesno("Confirm Delete", "Delete this listing? The freelancer profile will be kept.", parent=self.winfo_toplevel()):
             return
         try:
-            count = delete_listing(self.selected_id)
+            if self.is_freelancer_mode:
+                count = delete_listing_for_freelancer(
+                    self.selected_id, self.freelancer_id_getter()
+                )
+            else:
+                count = delete_listing(self.selected_id)
         except (sqlite3.Error, ValueError) as exc:
             self.report_error(exc)
             return
