@@ -22,6 +22,23 @@ class ListingsTests(unittest.TestCase):
                 INSERT INTO freelancers (FreelancerID, Name) VALUES (5, 'John Doe'), (6, 'Jane Smith');
                 CREATE TABLE projects (ProjectID INTEGER PRIMARY KEY, FreelancerID INTEGER);
                 INSERT INTO projects VALUES (1, 5);
+                CREATE TABLE reviews (
+                    ReviewsID INTEGER PRIMARY KEY,
+                    Reviewer TEXT,
+                    Stars INTEGER,
+                    Comments TEXT
+                );
+                CREATE TABLE freelancer_reviews (
+                    ReviewsID INTEGER PRIMARY KEY,
+                    ProjectID INTEGER,
+                    ClientID INTEGER,
+                    FreelancerID INTEGER
+                );
+                INSERT INTO reviews VALUES
+                    (1, 'Client One', 4, 'Good'),
+                    (2, 'Client Two', 5, 'Great');
+                INSERT INTO freelancer_reviews VALUES
+                    (1, 1, 1, 5), (2, 2, 2, 5);
             """)
         db.initialize_listings()
 
@@ -47,6 +64,23 @@ class ListingsTests(unittest.TestCase):
         self.assertEqual(db.delete_listing(a), 0)
         self.assertEqual(len(db.get_listings()), 1)
         self.assertEqual(len(db.get_freelancer_options()), 2)
+
+    def test_listing_rows_include_average_freelancer_reviews(self):
+        _, _ = self.seed()
+        rows = {row["FreelancerID"]: row for row in db.get_listings()}
+        self.assertEqual(rows[5]["AverageRating"], 4.5)
+        self.assertEqual(rows[5]["ReviewCount"], 2)
+        self.assertIsNone(rows[6]["AverageRating"])
+        self.assertEqual(rows[6]["ReviewCount"], 0)
+
+    def test_listing_rows_work_without_review_tables(self):
+        self.seed()
+        with db.connection() as conn:
+            conn.execute("DROP TABLE freelancer_reviews")
+            conn.execute("DROP TABLE reviews")
+        rows = db.get_listings()
+        self.assertTrue(all(row["AverageRating"] is None for row in rows))
+        self.assertTrue(all(row["ReviewCount"] == 0 for row in rows))
 
     def test_freelancer_scoped_listings(self):
         a, b = self.seed()

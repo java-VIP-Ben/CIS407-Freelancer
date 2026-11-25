@@ -458,6 +458,25 @@ def initialize_project_workflow():
                 SELECT p.ProjectID, p.MilestonesID FROM projects p
                 JOIN milestones m ON m.MilestonesID=p.MilestonesID
                 WHERE p.MilestonesID IS NOT NULL''')
+        review_columns = {
+            row[1].lower() for row in conn.execute('PRAGMA table_info(reviews)')
+        }
+        if (
+            'reviewsid' in review_columns
+            and {'projectid', 'clientid', 'freelancerid'} <= project_columns
+            and conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='clients'"
+            ).fetchone()
+            and conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='freelancers'"
+            ).fetchone()
+        ):
+            conn.execute('''CREATE TABLE IF NOT EXISTS freelancer_reviews (
+                ReviewsID INTEGER PRIMARY KEY REFERENCES reviews(ReviewsID) ON DELETE CASCADE,
+                ProjectID INTEGER NOT NULL UNIQUE REFERENCES projects(ProjectID) ON DELETE CASCADE,
+                ClientID INTEGER NOT NULL REFERENCES clients(ClientID) ON DELETE CASCADE,
+                FreelancerID INTEGER NOT NULL REFERENCES freelancers(FreelancerID) ON DELETE CASCADE
+            )''')
 
 
 def create_client_project(client_id, project_name):
@@ -517,17 +536,21 @@ def get_project_summaries(role, account_id):
     if not isinstance(account_id, int) or isinstance(account_id, bool):
         raise ValueError('A valid account is required.')
     with workflow_connection() as conn:
-        rows = conn.execute(f'''SELECT p.ProjectID, p.ProjectName, m.MilestonesID,
-                m.MilestoneName, m.PercentageCompleted, m.DateStarted
+        rows = conn.execute(f'''SELECT p.ProjectID, p.ProjectName, p.FreelancerID,
+                f.Name, m.MilestonesID, m.MilestoneName,
+                m.PercentageCompleted, m.DateStarted
             FROM projects p
+            LEFT JOIN freelancers f ON f.FreelancerID=p.FreelancerID
             LEFT JOIN project_milestones pm ON pm.ProjectID=p.ProjectID
             LEFT JOIN milestones m ON m.MilestonesID=pm.MilestonesID
             WHERE p.{project_owner}=?
             ORDER BY p.ProjectID DESC, m.MilestonesID''', (account_id,)).fetchall()
     projects = {}
-    for project_id, name, milestone_id, milestone_name, progress, date_started in rows:
+    for (project_id, name, freelancer_id, freelancer_name, milestone_id,
+         milestone_name, progress, date_started) in rows:
         project = projects.setdefault(project_id, {
             'ProjectID': project_id, 'ProjectName': name,
+            'FreelancerID': freelancer_id, 'FreelancerName': freelancer_name,
             'Milestones': [], 'Progress': 0,
         })
         if milestone_id is not None:
@@ -547,6 +570,58 @@ def get_project_summaries(role, account_id):
                 sum(item['PercentageCompleted'] for item in milestones) / len(milestones)
             )
     return list(projects.values())
+
+
+def get_project_review(project_id, role, account_id):
+    project_owner = {'client': 'ClientID', 'freelancer': 'FreelancerID'}.get(role)
+    if project_owner is None:
+        raise ValueError('Invalid account role.')
+    if not isinstance(account_id, int) or isinstance(account_id, bool):
+        raise ValueError('A valid account is required.')
+    with workflow_connection() as conn:
+        row = conn.execute(f'''SELECT r.ReviewsID, r.Reviewer, r.Stars, r.Comments
+            FROM projects p
+            JOIN freelancer_reviews fr ON fr.ProjectID=p.ProjectID
+            JOIN reviews r ON r.ReviewsID=fr.ReviewsID
+            WHERE p.ProjectID=? AND p.{project_owner}=?''',
+            (project_id, account_id)).fetchone()
+    if row is None:
+        return None
+    return {
+        'ReviewsID': row[0],
+        'Reviewer': row[1],
+        'Stars': row[2],
+        'Comments': row[3],
+    }
+
+
+def create_freelancer_review(client_id, project_id, stars, comments):
+    if type(stars) is not int or not 1 <= stars <= 5:
+        raise ValueError('Choose a rating from 1 to 5 stars.')
+    if not isinstance(comments, str):
+        raise ValueError('Review comments must be text.')
+    comments = comments.strip()
+    if len(comments) > 2000:
+        raise ValueError('Review comments must be 2000 characters or fewer.')
+    with workflow_connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        project = conn.execute('''SELECT p.FreelancerID, c.Name
+            FROM projects p JOIN clients c ON c.ClientID=p.ClientID
+            WHERE p.ProjectID=? AND p.ClientID=? AND p.FreelancerID IS NOT NULL''',
+            (project_id, client_id)).fetchone()
+        if project is None:
+            raise ValueError('Only a client on a project with an assigned freelancer can leave a review.')
+        if conn.execute(
+            'SELECT 1 FROM freelancer_reviews WHERE ProjectID=?', (project_id,)
+        ).fetchone():
+            raise ValueError('A review has already been submitted for this project.')
+        reviewer = project[1] or f'Client #{client_id}'
+        review_id = conn.execute('''INSERT INTO reviews (Reviewer, Stars, Comments)
+            VALUES (?, ?, ?)''', (reviewer, stars, comments)).lastrowid
+        conn.execute('''INSERT INTO freelancer_reviews
+            (ReviewsID, ProjectID, ClientID, FreelancerID) VALUES (?, ?, ?, ?)''',
+            (review_id, project_id, client_id, project[0]))
+        return review_id
 
 
 def create_project_milestone(project_id, role, account_id, name, progress=0, date_started=None):

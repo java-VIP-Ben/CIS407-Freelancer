@@ -9,6 +9,7 @@ from backend.database import (
     get_projects_for_client, get_projects_for_freelancer, update_projects,
     create_project_milestone, get_project_summaries,
     initialize_project_workflow, update_project_milestone_progress,
+    create_freelancer_review, get_project_review,
 )
 
 
@@ -583,9 +584,20 @@ class ProjectDetailPage(ctk.CTkFrame):
             ctk.CTkLabel(
                 self.scroll_frame, text="No milestones yet. Add one to start tracking progress."
             ).grid(row=1, column=0, pady=24)
-            return True
-        for row, milestone in enumerate(milestones, start=1):
-            self.create_milestone_row(row, milestone)
+        else:
+            for row, milestone in enumerate(milestones, start=1):
+                self.create_milestone_row(row, milestone)
+        if project["FreelancerID"] is not None:
+            try:
+                review = get_project_review(
+                    self.project_id, self.role, self.account_id
+                )
+            except (sqlite3.Error, ValueError) as exc:
+                self.status.configure(text=f"Unable to load project review: {exc}")
+                return False
+            self.create_review_section(
+                max(2, len(milestones) + 1), project, review
+            )
         return True
 
     def create_milestone_row(self, row, milestone):
@@ -696,3 +708,89 @@ class ProjectDetailPage(ctk.CTkFrame):
             border_width=1, command=dialog.destroy,
         ).pack(side="right", padx=(8, 0))
         ctk.CTkButton(actions, text="Add", width=85, command=save).pack(side="right")
+
+    def create_review_section(self, row, project, review):
+        section = ctk.CTkFrame(self.scroll_frame, corner_radius=10)
+        section.grid(row=row, column=0, sticky="ew", padx=8, pady=(12, 8))
+        section.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            section, text="Freelancer Review",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 4))
+        if review is not None:
+            ctk.CTkLabel(
+                section, text=f"Rating: {review['Stars']} / 5 stars",
+                anchor="w", font=ctk.CTkFont(size=13, weight="bold"),
+            ).grid(row=1, column=0, sticky="w", padx=14, pady=2)
+            if review["Comments"]:
+                ctk.CTkLabel(
+                    section, text=review["Comments"], anchor="w",
+                    justify="left", wraplength=650,
+                ).grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 12))
+            return
+        if self.role == "client":
+            freelancer_name = project["FreelancerName"] or f"Freelancer #{project['FreelancerID']}"
+            ctk.CTkButton(
+                section, text="Leave a Review",
+                command=lambda: self.open_review_dialog(freelancer_name),
+            ).grid(row=1, column=0, sticky="w", padx=14, pady=(4, 12))
+        else:
+            ctk.CTkLabel(
+                section, text="No review has been left for this project.",
+                anchor="w", text_color=("gray45", "gray65"),
+            ).grid(row=1, column=0, sticky="w", padx=14, pady=(4, 12))
+
+    def open_review_dialog(self, freelancer_name):
+        if self.role != "client":
+            self.status.configure(text="Only clients can leave freelancer reviews.")
+            return
+        dialog = ctk.CTkToplevel(self.winfo_toplevel())
+        dialog.title("Review Freelancer")
+        dialog.geometry("500x350")
+        dialog.resizable(False, False)
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            dialog, text=f"Review {freelancer_name}",
+            font=ctk.CTkFont(size=19, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(18, 8))
+        ctk.CTkLabel(dialog, text="Rating (1–5 stars)", anchor="w").grid(
+            row=1, column=0, sticky="ew", padx=20, pady=(4, 2)
+        )
+        rating = ctk.CTkOptionMenu(
+            dialog, values=["5", "4", "3", "2", "1"],
+        )
+        rating.grid(row=2, column=0, sticky="w", padx=20, pady=(0, 8))
+        ctk.CTkLabel(
+            dialog, text="Comments (optional)", anchor="w"
+        ).grid(row=3, column=0, sticky="ew", padx=20, pady=(2, 2))
+        comments = ctk.CTkTextbox(dialog, height=110, wrap="word")
+        comments.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 8))
+        error = ctk.CTkLabel(
+            dialog, text="", anchor="w", text_color=("#B23B3B", "#FF8888")
+        )
+        error.grid(row=5, column=0, sticky="ew", padx=20, pady=2)
+
+        def submit():
+            try:
+                create_freelancer_review(
+                    self.account_id, self.project_id, int(rating.get()),
+                    comments.get("1.0", "end-1c"),
+                )
+            except (sqlite3.Error, ValueError) as exc:
+                error.configure(text=str(exc))
+                return
+            dialog.destroy()
+            self.refresh()
+            self.status.configure(text="Review submitted.")
+
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.grid(row=6, column=0, sticky="e", padx=20, pady=(4, 14))
+        ctk.CTkButton(
+            actions, text="Cancel", width=85, fg_color="transparent",
+            border_width=1, command=dialog.destroy,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            actions, text="Submit Review", width=115, command=submit,
+        ).pack(side="right")

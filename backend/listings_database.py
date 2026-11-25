@@ -71,13 +71,35 @@ def get_freelancer_options():
 def get_listings():
     """Join names from the parent table so name changes appear automatically."""
     with connection() as conn:
+        review_tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('freelancer_reviews', 'reviews')"
+            )
+        }
+        has_reviews = {'freelancer_reviews', 'reviews'} <= review_tables
+        review_stats = """
+            LEFT JOIN (
+                SELECT fr.FreelancerID, ROUND(AVG(r.Stars), 1) AS AverageRating,
+                       COUNT(*) AS ReviewCount
+                FROM freelancer_reviews fr
+                JOIN reviews r ON r.ReviewsID=fr.ReviewsID
+                GROUP BY fr.FreelancerID
+            ) ratings ON ratings.FreelancerID=f.FreelancerID
+        """ if has_reviews else ""
+        rating_columns = (
+            "ratings.AverageRating, COALESCE(ratings.ReviewCount, 0) AS ReviewCount"
+            if has_reviews else "NULL AS AverageRating, 0 AS ReviewCount"
+        )
         return [dict(row) for row in conn.execute("""
             SELECT l.ListingID, l.FreelancerID, f.Name, l.JobTitle,
-                   l.Description, l.Skills, l.Category, l.CreatedAt, l.PriceCents
+                   l.Description, l.Skills, l.Category, l.CreatedAt, l.PriceCents,
+                   {rating_columns}
             FROM listings AS l
             JOIN freelancers AS f ON f.FreelancerID = l.FreelancerID
+            {review_stats}
             ORDER BY l.ListingID DESC
-        """)]
+        """.format(rating_columns=rating_columns, review_stats=review_stats))]
 
 
 def get_listings_for_freelancer(freelancer_id):

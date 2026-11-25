@@ -100,21 +100,32 @@ class ListingsHome(ctk.CTkFrame):
             row=0, column=0, sticky="ew", padx=15, pady=(12, 2))
         ctk.CTkLabel(card, text=f"By {row['Name'] or 'Unnamed freelancer'}", anchor="w",
                      text_color=("gray35", "gray70")).grid(row=1, column=0, sticky="ew", padx=15)
+        review_count = row["ReviewCount"]
+        rating_text = (
+            f"Average rating: {row['AverageRating']:.1f}/5 ({review_count} "
+            f"review{'s' if review_count != 1 else ''})"
+            if review_count else "No reviews yet"
+        )
+        ctk.CTkLabel(
+            card, text=rating_text, anchor="w",
+            text_color=("#A06A00", "#F2C14E"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=2, column=0, sticky="ew", padx=15, pady=(2, 0))
         ctk.CTkLabel(card, text=row["Description"], anchor="w", justify="left", wraplength=490).grid(
-            row=2, column=0, sticky="ew", padx=15, pady=(8, 3))
+            row=3, column=0, sticky="ew", padx=15, pady=(7, 3))
         details = f"Skills: {row['Skills']}"
         if row["Category"]:
             details += f"  |  Category: {row['Category']}"
         ctk.CTkLabel(card, text=details, anchor="w", justify="left", wraplength=490,
                      text_color=("#245B93", "#8DBFF5")).grid(
-            row=3, column=0, sticky="ew", padx=15, pady=(2, 12))
+            row=4, column=0, sticky="ew", padx=15, pady=(2, 12))
         ctk.CTkLabel(card, text=format_price(row["PriceCents"]),
                      font=ctk.CTkFont(size=18, weight="bold")).grid(
             row=0, column=1, rowspan=2, padx=15, pady=(12, 2))
         ctk.CTkButton(card, text="Book", width=90,
                       state="normal" if row["PriceCents"] is not None else "disabled",
                       command=lambda r=row: self.on_book(r)).grid(
-            row=2, column=1, rowspan=2, padx=15, pady=(2, 12))
+            row=3, column=1, rowspan=2, padx=15, pady=(2, 12))
 
 
 class ListingsPage(ctk.CTkFrame):
