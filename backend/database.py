@@ -16,6 +16,7 @@
 
 import sqlite3
 from pathlib import Path
+from contextlib import contextmanager
 DB_NAME = Path(__file__).resolve().parent / "freelancerApp.db"
 
 def create_freelancer(name, email, phone):
@@ -38,7 +39,7 @@ def get_freelancers():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM freelancers")
+    cur.execute("SELECT FreelancerID, Name, SkillsListID, Email, Phone, ReviewsID FROM freelancers")
     freelancers = cur.fetchall()
 
     conn.close()
@@ -104,7 +105,7 @@ def get_projects():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM projects")
+    cur.execute("SELECT ProjectID, FreelancerID, ClientID, PaymentID, SkillsID, MilestonesID, ProposalID FROM projects")
     projects = cur.fetchall()
 
     conn.close()
@@ -169,7 +170,7 @@ def get_client():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM clients")
+    cur.execute("SELECT ClientID, Name, Address, Phone, Email FROM clients")
     clients = cur.fetchall()
 
     conn.close()
@@ -255,7 +256,7 @@ def create_proposal(proposal_name, project_id):
 
 def get_proposals():
     with sqlite3.connect(DB_NAME) as conn:
-        return conn.execute("SELECT * FROM proposals").fetchall()
+        return conn.execute("SELECT ProposalID, ProposalName, ProjectID, DateCreated, DateUpdated FROM proposals").fetchall()
 
 def update_proposal(proposal_id, proposal_name, project_id):
     with sqlite3.connect(DB_NAME) as conn:
@@ -409,3 +410,90 @@ def delete_milestone(milestone_id):
         )
         return cur.rowcount
 
+
+# Project/proposal interfaces required by the latest frontend.
+@contextmanager
+def workflow_connection():
+    conn = sqlite3.connect(Path(DB_NAME).resolve().as_uri() + '?mode=rw', uri=True, timeout=5)
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def initialize_project_workflow():
+    """Non-destructive migration for named projects and freelancer invitations."""
+    with workflow_connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        for table, column, definition in (
+            ('projects', 'ProjectName', 'TEXT'),
+            ('proposals', 'FreelancerID', 'INTEGER REFERENCES freelancers(FreelancerID)'),
+            ('proposals', 'Status', "TEXT NOT NULL DEFAULT 'pending' CHECK(Status IN ('pending','accepted','declined'))"),
+        ):
+            columns = {row[1].lower() for row in conn.execute(f'PRAGMA table_info({table})')}
+            if not columns:
+                raise ValueError(f'Missing {table} table.')
+            if column.lower() not in columns:
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+
+
+def create_client_project(client_id, project_name):
+    name = project_name.strip()
+    if not name or len(name) > 120:
+        raise ValueError('Enter a project name (1–120 characters).')
+    with workflow_connection() as conn:
+        if client_id is None or not conn.execute('SELECT 1 FROM clients WHERE ClientID=?', (client_id,)).fetchone():
+            raise ValueError('A valid client account is required.')
+        return conn.execute('INSERT INTO projects (ClientID, ProjectName) VALUES (?, ?)', (client_id, name)).lastrowid
+
+
+def get_projects_for_client(client_id):
+    with workflow_connection() as conn:
+        return conn.execute('''SELECT p.ProjectID, p.ProjectName, f.Name, p.FreelancerID
+            FROM projects p LEFT JOIN freelancers f ON f.FreelancerID=p.FreelancerID
+            WHERE p.ClientID=? ORDER BY p.ProjectID DESC''', (client_id,)).fetchall()
+
+
+def get_projects_for_freelancer(freelancer_id):
+    with workflow_connection() as conn:
+        return conn.execute('''SELECT p.ProjectID, p.ProjectName, p.ClientID, c.Name
+            FROM projects p LEFT JOIN clients c ON c.ClientID=p.ClientID
+            WHERE p.FreelancerID=? ORDER BY p.ProjectID DESC''', (freelancer_id,)).fetchall()
+
+
+def create_project_proposal(project_id, freelancer_id, client_id):
+    with workflow_connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        project = conn.execute('SELECT ProjectName FROM projects WHERE ProjectID=? AND ClientID=?', (project_id, client_id)).fetchone()
+        if project is None:
+            raise ValueError('Project does not belong to this client.')
+        if freelancer_id is None or not conn.execute('SELECT 1 FROM freelancers WHERE FreelancerID=?', (freelancer_id,)).fetchone():
+            raise ValueError('Freelancer does not exist.')
+        if conn.execute("SELECT 1 FROM proposals WHERE ProjectID=? AND FreelancerID=? AND Status='pending'", (project_id, freelancer_id)).fetchone():
+            raise ValueError('A pending invitation already exists for this freelancer.')
+        return conn.execute('''INSERT INTO proposals (ProposalName, ProjectID, FreelancerID, Status)
+            VALUES (?, ?, ?, 'pending')''', (project[0] or f'Project #{project_id}', project_id, freelancer_id)).lastrowid
+
+
+def get_freelancer_proposals(freelancer_id):
+    with workflow_connection() as conn:
+        return conn.execute('''SELECT r.ProposalID, r.ProposalName, p.ProjectID, p.ProjectName,
+            p.ClientID, c.Name, r.Status FROM proposals r JOIN projects p ON p.ProjectID=r.ProjectID
+            LEFT JOIN clients c ON c.ClientID=p.ClientID WHERE r.FreelancerID=? ORDER BY r.ProposalID DESC''', (freelancer_id,)).fetchall()
+
+
+def respond_to_project_proposal(proposal_id, freelancer_id, accept):
+    with workflow_connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute("SELECT ProjectID FROM proposals WHERE ProposalID=? AND FreelancerID=? AND Status='pending'", (proposal_id, freelancer_id)).fetchone()
+        if row is None or row[0] is None:
+            return 0
+        conn.execute('UPDATE proposals SET Status=?, DateUpdated=CURRENT_TIMESTAMP WHERE ProposalID=?', ('accepted' if accept else 'declined', proposal_id))
+        if accept:
+            conn.execute('UPDATE projects SET FreelancerID=?, ProposalID=? WHERE ProjectID=?', (freelancer_id, proposal_id, row[0]))
+        return 1

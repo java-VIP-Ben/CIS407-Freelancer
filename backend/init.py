@@ -18,6 +18,7 @@ CREATE TABLE projects (
     SkillsID INTEGER,
     MilestonesID INTEGER,
     ProposalID INTEGER,
+    ProjectName TEXT,
 
     -- Foreign Key Constraints
     FOREIGN KEY (FreelancerID) REFERENCES freelancers(FreelancerID),
@@ -37,6 +38,7 @@ cur.execute("""
         Email TEXT,
         Phone TEXT,
         ReviewsID INTEGER,
+        PasswordHash TEXT,
 
         -- Foreign Key Constraints
         FOREIGN KEY (SkillsListID) REFERENCES skillsList(skillsListID),
@@ -50,7 +52,8 @@ cur.execute("""
         Name VARCHAR(50),
         Address TEXT,
         Phone TEXT,
-        Email TEXT
+        Email TEXT,
+        PasswordHash TEXT
     )
 """)
 
@@ -69,6 +72,8 @@ cur.execute("""
         ProposalID INTEGER PRIMARY KEY NOT NULL,
         ProposalName TEXT NOT NULL,
         ProjectID INTEGER,
+        FreelancerID INTEGER REFERENCES freelancers(FreelancerID),
+        Status TEXT NOT NULL DEFAULT 'pending' CHECK(Status IN ('pending','accepted','declined')),
         DateCreated DATETIME DEFAULT CURRENT_TIMESTAMP,
         DateUpdated DATE,
 

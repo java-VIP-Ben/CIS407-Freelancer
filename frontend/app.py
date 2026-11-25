@@ -9,8 +9,11 @@ if __name__ == "__main__" and not __package__:
 
 import customtkinter as ctk
 from backend.database import (
-    create_project_proposal, get_client_id_by_email,
-    get_freelancer_id_by_email, get_projects_for_client,
+    create_project_proposal, get_projects_for_client, initialize_project_workflow,
+)
+from backend.client_auth import (
+    initialize_auth, authenticate_admin, authenticate_client,
+    authenticate_freelancer, register_client,
 )
 from frontend.admin_page import AdminPage
 from frontend.proposal_page import FreelancerProposalsPage
@@ -78,6 +81,7 @@ class App(ctk.CTk):
 
         self.pages = {
             "login": self.login_page(self.main_container),
+            "register": self.registration_page(self.main_container),
             "home": ListingsHome(self.main_container, self.book_listing),
             "listings": ListingsPage(self.main_container),
             "projects": ProjectsHome(self.main_container),
@@ -107,93 +111,130 @@ class App(ctk.CTk):
         ctk.CTkLabel(form, text="Sign In", font=ctk.CTkFont(size=24, weight="bold")).grid(
             row=0, column=0, padx=30, pady=(30, 15)
         )
-        self.username_entry = ctk.CTkEntry(
-            form, width=260, placeholder_text="Admin username or account email"
-        )
-        self.username_entry.grid(row=1, column=0, padx=30, pady=8)
-        self.password_entry = ctk.CTkEntry(
-            form, width=260, placeholder_text="Admin password", show="*"
-        )
-        self.password_entry.grid(row=2, column=0, padx=30, pady=8)
-        self.login_error = ctk.CTkLabel(form, text="", text_color=("#B23B3B", "#ff7777"))
-        self.login_error.grid(row=3, column=0, padx=30, pady=(2, 8))
+        self.login_role = StringVar(master=self, value="Client")
+        ctk.CTkOptionMenu(form, values=["Client", "Freelancer", "Admin"],
+                          variable=self.login_role, width=260,
+                          command=self.on_login_role_change).grid(row=1, column=0, padx=30, pady=8)
+        self.username_entry = ctk.CTkEntry(form, width=260, placeholder_text="Email or admin username")
+        self.username_entry.grid(row=2, column=0, padx=30, pady=8)
+        self.password_entry = ctk.CTkEntry(form, width=260, placeholder_text="Password", show="*")
+        self.password_entry.grid(row=3, column=0, padx=30, pady=8)
+        self.login_error = ctk.CTkLabel(form, text="", wraplength=300,
+                                       text_color=("#B23B3B", "#ff7777"))
+        self.login_error.grid(row=4, column=0, padx=30, pady=(2, 8))
         ctk.CTkButton(form, text="Login", width=260, command=self.attempt_login).grid(
-            row=4, column=0, padx=30, pady=(5, 8)
-        )
-        ctk.CTkButton(
-            form, text="Sign In with Client Email", width=260,
-            command=self.client_login,
-        ).grid(row=5, column=0, padx=30, pady=5)
-        ctk.CTkButton(
-            form, text="Sign In with Freelancer Email", width=260,
-            command=self.freelancer_login,
-        ).grid(row=6, column=0, padx=30, pady=5)
-        ctk.CTkLabel(
-            form, text="Demo client and freelancer access use email only.",
-            anchor="w",
-        ).grid(row=7, column=0, padx=30, pady=(2, 20))
-        # Bind before the first login attempt, not inside the callback.
+            row=5, column=0, padx=30, pady=(5, 8))
+        ctk.CTkButton(form, text="Create Client Account", width=260,
+                      fg_color="transparent", border_width=1,
+                      command=lambda: self.show_page("register")).grid(
+            row=6, column=0, padx=30, pady=(5, 24))
         self.username_entry.bind("<Return>", self.attempt_login)
         self.password_entry.bind("<Return>", self.attempt_login)
         return page
 
+    def registration_page(self, master):
+        page = ctk.CTkFrame(master, corner_radius=0)
+        page.grid_rowconfigure(0, weight=1)
+        page.grid_columnconfigure(0, weight=1)
+        form = ctk.CTkFrame(page, corner_radius=12)
+        form.grid(row=0, column=0, padx=20, pady=16)
+        ctk.CTkLabel(form, text="Create Client Account",
+                     font=ctk.CTkFont(size=24, weight="bold")).grid(
+            row=0, column=0, padx=30, pady=(20, 10))
+        self.register_entries = {}
+        fields = (("name", "Full name"), ("email", "Email address"),
+                  ("address", "Address"), ("phone", "Phone"),
+                  ("password", "Password (12+ characters)"), ("confirm", "Confirm password"))
+        for row, (key, label) in enumerate(fields, 1):
+            entry = ctk.CTkEntry(form, width=300, height=32, placeholder_text=label,
+                                 **({"show": "*"} if key in ("password", "confirm") else {}))
+            entry.grid(row=row, column=0, padx=30, pady=5)
+            self.register_entries[key] = entry
+        self.register_error = ctk.CTkLabel(form, text="", wraplength=300,
+                                          text_color=("#B23B3B", "#ff7777"))
+        self.register_error.grid(row=7, column=0, padx=20, pady=4)
+        ctk.CTkButton(form, text="Register", width=300, command=self.attempt_register).grid(
+            row=8, column=0, padx=30, pady=5)
+        ctk.CTkButton(form, text="Back to Sign In", width=300, fg_color="transparent",
+                      border_width=1, command=self.cancel_registration).grid(
+            row=9, column=0, padx=30, pady=(5, 18))
+        self.register_entries["confirm"].bind("<Return>", self.attempt_register)
+        return page
+
+    def clear_registration(self):
+        for entry in self.register_entries.values():
+            entry.delete(0, "end")
+        self.register_error.configure(text="")
+
+    def cancel_registration(self):
+        self.clear_registration()
+        self.show_page("login")
+
+    def attempt_register(self, event=None):
+        if self.current_role is not None:
+            return
+        data = {key: entry.get() for key, entry in self.register_entries.items()}
+        try:
+            if data["password"] != data["confirm"]:
+                raise ValueError("Passwords do not match.")
+            initialize_project_workflow()
+            register_client(data["name"], data["email"], data["address"],
+                            data["phone"], data["password"])
+        except (sqlite3.Error, ValueError) as exc:
+            self.register_error.configure(text=str(exc))
+            return
+        finally:
+            for key in ("password", "confirm"):
+                self.register_entries[key].delete(0, "end")
+        self.clear_registration()
+        self.login_role.set("Client")
+        self.username_entry.delete(0, "end")
+        self.username_entry.insert(0, data["email"].strip())
+        self.show_page("login")
+        self.login_error.configure(text="Account created. Sign in with your password.")
+
+    def clear_login_fields(self):
+        self.username_entry.delete(0, "end")
+        self.password_entry.delete(0, "end")
+
+    def on_login_role_change(self, _role):
+        self.clear_login_fields()
+        self.login_error.configure(text="")
+        self.username_entry.focus_set()
+
     def attempt_login(self, event=None):
+        if self.current_role is not None:
+            return
         username = self.username_entry.get().strip()
         password = self.password_entry.get()
-        # Demo credentials retained from the original login. Not production authentication.
-        if username == "admin" and password == "admin":
-            self.login_error.configure(text="")
-            self.password_entry.delete(0, "end")
-            self.current_user = username
-            self.current_client_id = None
-            self.current_freelancer_id = None
-            self.current_role = "admin"
-            self.update_nav_access()
-            self.show_page("home")
-        else:
-            self.login_error.configure(text="Invalid username or password")
-            self.password_entry.delete(0, "end")
-            self.password_entry.focus_set()
-
-    def client_login(self):
-        email = self.username_entry.get().strip()
+        role = self.login_role.get().lower()
         try:
-            client_id = get_client_id_by_email(email)
+            if role == "admin":
+                account = {"Name": "admin"} if authenticate_admin(username, password) else None
+            elif role == "client":
+                account = authenticate_client(username, password)
+            elif role == "freelancer":
+                account = authenticate_freelancer(username, password)
+            else:
+                account = None
+            if account is None:
+                self.login_error.configure(text="Invalid credentials or account not activated.")
+                return
+            initialize_auth()
+            initialize_project_workflow()
         except (sqlite3.Error, ValueError) as exc:
             self.login_error.configure(text=f"Unable to sign in: {exc}")
             return
-        if client_id is None:
-            self.login_error.configure(text="No client account found for that email.")
-            return
-
+        finally:
+            self.clear_login_fields()
+            self.username_entry.focus_set()
+        self.current_user = account["Name"] or username
+        self.current_client_id = account.get("ClientID") if role == "client" else None
+        self.current_freelancer_id = account.get("FreelancerID") if role == "freelancer" else None
+        self.current_role = role
         self.login_error.configure(text="")
-        self.password_entry.delete(0, "end")
-        self.current_user = email
-        self.current_client_id = client_id
-        self.current_freelancer_id = None
-        self.current_role = "client"
         self.update_nav_access()
-        self.show_page("client_projects")
-
-    def freelancer_login(self):
-        email = self.username_entry.get().strip()
-        try:
-            freelancer_id = get_freelancer_id_by_email(email)
-        except (sqlite3.Error, ValueError) as exc:
-            self.login_error.configure(text=f"Unable to sign in: {exc}")
-            return
-        if freelancer_id is None:
-            self.login_error.configure(text="No freelancer account found for that email.")
-            return
-
-        self.login_error.configure(text="")
-        self.password_entry.delete(0, "end")
-        self.current_user = email
-        self.current_client_id = None
-        self.current_freelancer_id = freelancer_id
-        self.current_role = "freelancer"
-        self.update_nav_access()
-        self.show_page("my_projects")
+        self.show_page("my_projects" if role == "freelancer" else "home")
 
     def sign_out(self):
         self.current_user = None
@@ -203,23 +244,20 @@ class App(ctk.CTk):
         self.username_entry.delete(0, "end")
         self.password_entry.delete(0, "end")
         self.login_error.configure(text="")
+        self.login_role.set("Client")
+        self.clear_registration()
+        self.pages["home"].clear_search()
         self.update_nav_access()
         self.show_page("login")
 
     def update_nav_access(self):
-        role = self.current_role
-        for page_name, button in self.nav_buttons.items():
-            if role == "client":
-                restricted = page_name in (
-                    "listings", "projects", "proposals", "admin",
-                )
-            elif role == "freelancer":
-                restricted = page_name not in (
-                    "my_projects", "proposals", "settings",
-                )
-            else:
-                restricted = page_name in ("my_projects", "proposals")
-            button.configure(state="disabled" if restricted else "normal")
+        allowed = {
+            "client": {"home", "my_projects", "settings"},
+            "freelancer": {"my_projects", "proposals", "settings"},
+            "admin": {"home", "listings", "projects", "admin", "settings"},
+        }.get(self.current_role, set())
+        for name, button in self.nav_buttons.items():
+            button.configure(state="normal" if name in allowed else "disabled")
 
     def settings_page(self, master):
         page = ctk.CTkFrame(master, corner_radius=0)
@@ -232,73 +270,43 @@ class App(ctk.CTk):
         return page
 
     def show_page(self, target_page):
+        role = self.current_role
         if target_page == "my_projects":
-            if self.current_role == "client":
-                target_page = "client_projects"
-            elif self.current_role == "freelancer":
-                target_page = "freelancer_projects"
-            else:
-                target_page = "home" if self.current_user is not None else "login"
-
+            target_page = {"client": "client_projects", "freelancer": "freelancer_projects"}.get(role, "home")
         if target_page not in self.pages:
             raise ValueError(f"Unknown page: {target_page}")
-
-        # Do not allow navigation to application pages until signed in.
-        if target_page != "login" and self.current_user is None:
-            target_page = "login"
-        elif self.current_role == "client" and target_page in (
-            "listings", "projects", "freelancer_projects", "proposals", "admin",
-        ):
-            target_page = "client_projects"
-        elif self.current_role == "freelancer" and target_page not in (
-            "freelancer_projects", "proposals", "settings",
-        ):
-            target_page = "freelancer_projects"
-        elif self.current_role != "client" and target_page == "client_projects":
-            target_page = "home" if self.current_user is not None else "login"
-        elif self.current_role != "freelancer" and target_page == "freelancer_projects":
-            target_page = "home" if self.current_user is not None else "login"
-        elif self.current_role != "freelancer" and target_page == "proposals":
-            target_page = "home" if self.current_user is not None else "login"
-
-        if target_page == "login":
-            self.current_user = None
-            self.current_client_id = None
-            self.current_freelancer_id = None
-            self.current_role = None
-            self.update_nav_access()
+        allowed = {
+            None: {"login", "register"},
+            "client": {"home", "client_projects", "settings"},
+            "freelancer": {"freelancer_projects", "proposals", "settings"},
+            "admin": {"home", "listings", "projects", "admin", "settings"},
+        }.get(role, {"login"})
+        if target_page not in allowed:
+            target_page = "login" if role is None else ("freelancer_projects" if role == "freelancer" else "home")
+        if role is None:
             self.nav_bar.grid_remove()
+            self.password_entry.delete(0, "end")
         else:
             self.nav_bar.grid(row=0, column=0, sticky="ew")
-
-        nav_target = (
-            "my_projects"
-            if target_page in ("client_projects", "freelancer_projects")
-            else target_page
-        )
+        nav_target = "my_projects" if target_page in ("client_projects", "freelancer_projects") else target_page
         for name, page in self.pages.items():
             if name == target_page:
                 page.grid(row=0, column=0, sticky="nsew")
             else:
                 page.grid_remove()
-            if name in self.nav_buttons:
-                self.nav_buttons[name].configure(
-                    fg_color=("gray75", "gray25") if name == nav_target else "transparent"
-                )
-
+        for name, button in self.nav_buttons.items():
+            button.configure(fg_color=("gray75", "gray25") if name == nav_target else "transparent")
         if target_page == "login":
             self.after_idle(self.username_entry.focus_set)
-        elif target_page in (
-            "home", "listings", "projects", "client_projects",
-            "freelancer_projects", "proposals", "admin",
-        ):
+        elif target_page in ("home", "listings", "projects", "client_projects",
+                             "freelancer_projects", "proposals", "admin"):
             self.pages[target_page].on_show()
 
     def book_listing(self, listing):
         if self.current_role != "client" or self.current_client_id is None:
             messagebox.showinfo(
                 "Client Sign-In Required",
-                "Sign in with a client email to invite a freelancer to a project.",
+                "Sign in as a client to invite a freelancer to a project.",
                 parent=self,
             )
             return
@@ -364,7 +372,12 @@ class App(ctk.CTk):
             text_color=("gray45", "gray65"),
         ).grid(row=3, column=0, sticky="ew", padx=22, pady=(0, 12))
 
+        client_id = self.current_client_id
+
         def send_proposal():
+            if self.current_role != "client" or self.current_client_id != client_id:
+                dialog.destroy()
+                return
             project = project_options[selected_project.get()]
             project_id, project_name, freelancer_name, assigned_id = project
             if assigned_id is not None:
@@ -379,7 +392,7 @@ class App(ctk.CTk):
 
             try:
                 proposal_id = create_project_proposal(
-                    project_id, listing["FreelancerID"], self.current_client_id
+                    project_id, listing["FreelancerID"], client_id
                 )
             except (sqlite3.Error, ValueError) as exc:
                 messagebox.showerror(

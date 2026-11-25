@@ -39,6 +39,8 @@ def connection():
 def _schema(conn, table):
     name = check_table(table)
     columns = [dict(row) for row in conn.execute(f'PRAGMA table_info({name})')]
+    if table in ('clients', 'freelancers'):
+        columns = [col for col in columns if col['name'].lower() != 'passwordhash']
     if not columns:
         raise ValueError(f'Table {table} does not exist in the database.')
     keys = [col for col in columns if col['pk']]
@@ -58,8 +60,9 @@ def get_schema(table):
 def get_records(table):
     with connection() as conn:
         schema = _schema(conn, table)
+        columns = ", ".join(quote(col["name"]) for col in schema["columns"])
         return [dict(row) for row in conn.execute(
-            f'SELECT * FROM {check_table(table)} ORDER BY {quote(schema["primary_key"])}')]
+            f'SELECT {columns} FROM {check_table(table)} ORDER BY {quote(schema["primary_key"])}')]
 
 
 def _values(schema, values):
